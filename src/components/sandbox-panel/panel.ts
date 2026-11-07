@@ -4,7 +4,6 @@ import { createSandbox, destroySandbox, fetchTail } from "./api.ts";
 import { useSandboxes } from "./hooks.ts";
 import { CreateForm } from "./parts/form.ts";
 import { SandboxRow } from "./parts/row.ts";
-import { PANEL_CSS } from "./styles.ts";
 import type { EventCache } from "./types.ts";
 
 /** 面板主体：只做组合与动作编排，数据获取在 hooks，展示在 parts。 */
@@ -74,7 +73,6 @@ export function SandboxPanel() {
   };
 
   return h("div", { className: "sbx-root" },
-    h("style", null, PANEL_CSS),
     h("div", { className: "sbx-head" },
       h("div", { className: "sbx-grow" },
         h("div", { className: "sbx-title" }, TEXTS.title),

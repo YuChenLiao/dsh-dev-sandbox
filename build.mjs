@@ -21,6 +21,12 @@ await build({
 
 await build({
   ...shared,
+  entryPoints: ["src/components/sandbox-panel/panel.css"],
+  outfile: "dist/panel.css",
+});
+
+await build({
+  ...shared,
   entryPoints: ["src/entries/client.ts"],
   outfile: "dist/client.js",
   platform: "node",

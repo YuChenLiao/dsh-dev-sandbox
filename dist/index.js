@@ -86,6 +86,24 @@ function readJsonBody(req) {
   });
 }
 
+// src/shared/routes.ts
+var ROUTE_PREFIX = "/__sbx";
+var STYLESHEET_ROUTE = "panel.css";
+var PREFIX_PATTERN = new RegExp(`^${ROUTE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:/|$)`);
+function stripRoutePrefix(pathname) {
+  return pathname.replace(PREFIX_PATTERN, "");
+}
+
+// src/components/sandbox-manager/assets.ts
+import fsp from "node:fs/promises";
+var STYLESHEET_URL = new URL("./panel.css", import.meta.url);
+var cached;
+async function readStylesheet() {
+  if (cached !== void 0) return cached;
+  cached = await fsp.readFile(STYLESHEET_URL, "utf8");
+  return cached;
+}
+
 // src/shared/paths.ts
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -106,7 +124,7 @@ function workHome() {
 }
 
 // src/shared/state.ts
-import fsp from "node:fs/promises";
+import fsp2 from "node:fs/promises";
 var StateStore = class {
   constructor(file) {
     this.file = file;
@@ -115,7 +133,7 @@ var StateStore = class {
   tail = Promise.resolve();
   async read() {
     try {
-      const text = await fsp.readFile(this.file, "utf8");
+      const text = await fsp2.readFile(this.file, "utf8");
       const parsed = JSON.parse(text);
       return { sandboxes: Array.isArray(parsed.sandboxes) ? parsed.sandboxes : [] };
     } catch {
@@ -126,10 +144,10 @@ var StateStore = class {
     const run = this.tail.then(async () => {
       const state = await this.read();
       const next = mutate(state) ?? state;
-      await fsp.mkdir(this.file.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
+      await fsp2.mkdir(this.file.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
       const tmp = `${this.file}.${process.pid}.tmp`;
-      await fsp.writeFile(tmp, JSON.stringify(next, null, 2));
-      await fsp.rename(tmp, this.file);
+      await fsp2.writeFile(tmp, JSON.stringify(next, null, 2));
+      await fsp2.rename(tmp, this.file);
       return next;
     });
     this.tail = run.catch(() => void 0);
@@ -335,7 +353,7 @@ async function readLog(ctx, input) {
 }
 
 // src/components/sandbox-manager/lifecycle.ts
-import fsp3 from "node:fs/promises";
+import fsp4 from "node:fs/promises";
 import path3 from "node:path";
 
 // src/components/sandbox-manager/boot.ts
@@ -413,7 +431,7 @@ function tail(text) {
 }
 
 // src/components/sandbox-manager/profile.ts
-import fsp2 from "node:fs/promises";
+import fsp3 from "node:fs/promises";
 import path2 from "node:path";
 function profilePackageJson(bundles) {
   const useBundles = bundles.length ? bundles : DEFAULT_BUNDLES;
@@ -428,27 +446,27 @@ function resolveBundles(bundles) {
   return bundles && bundles.length ? [...bundles] : [...DEFAULT_BUNDLES];
 }
 async function writeProfile(paths, bundles) {
-  await fsp2.mkdir(paths.profileDir, { recursive: true });
-  await fsp2.mkdir(paths.workspace, { recursive: true });
-  await fsp2.mkdir(paths.agentsHome, { recursive: true });
-  await fsp2.writeFile(path2.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
+  await fsp3.mkdir(paths.profileDir, { recursive: true });
+  await fsp3.mkdir(paths.workspace, { recursive: true });
+  await fsp3.mkdir(paths.agentsHome, { recursive: true });
+  await fsp3.writeFile(path2.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
   const patch = path2.join(paths.profileDir, "cordis.patch.yml");
-  const exists = await fsp2.access(patch).then(() => true).catch(() => false);
-  if (!exists) await fsp2.writeFile(patch, PROFILE_PATCH_BODY);
+  const exists = await fsp3.access(patch).then(() => true).catch(() => false);
+  if (!exists) await fsp3.writeFile(patch, PROFILE_PATCH_BODY);
 }
 async function writeEnvFile(paths, apiKey) {
   if (!apiKey) return;
-  await fsp2.writeFile(path2.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
+  await fsp3.writeFile(path2.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
 `);
 }
 async function ensureModuleResolution(paths) {
   const link = path2.join(paths.home, "profiles", PROFILE_NODE_MODULES);
   const shared = path2.join(workHome(), "profiles", PROFILE_NODE_MODULES);
-  const linked = await fsp2.access(link).then(() => true).catch(() => false);
+  const linked = await fsp3.access(link).then(() => true).catch(() => false);
   if (linked) return;
-  const available = await fsp2.access(shared).then(() => true).catch(() => false);
+  const available = await fsp3.access(shared).then(() => true).catch(() => false);
   if (!available) return;
-  await fsp2.symlink(shared, link, "junction").catch(() => void 0);
+  await fsp3.symlink(shared, link, "junction").catch(() => void 0);
 }
 
 // src/components/sandbox-manager/lifecycle.ts
@@ -497,7 +515,7 @@ async function createSandbox(ctx, input) {
     return record;
   } catch (error) {
     await sleep(600);
-    await fsp3.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
+    await fsp4.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
     throw error;
   }
 }
@@ -510,10 +528,10 @@ async function destroySandbox(ctx, input) {
   while (Date.now() < deadline && await portOpen(record.port)) await sleep(250);
   const trash = insidePath(ctx.root, path3.join(ctx.root, `${TRASH_PREFIX}${path3.basename(record.home)}-${Date.now()}`));
   const instanceDir = path3.dirname(record.home);
-  const exists = await fsp3.access(instanceDir).then(() => true).catch(() => false);
+  const exists = await fsp4.access(instanceDir).then(() => true).catch(() => false);
   if (exists) {
-    await fsp3.rename(instanceDir, trash).catch(() => void 0);
-    await fsp3.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
+    await fsp4.rename(instanceDir, trash).catch(() => void 0);
+    await fsp4.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
   }
   await ctx.state.update((next) => {
     next.sandboxes = next.sandboxes.filter((item) => item.id !== record.id);
@@ -528,14 +546,14 @@ async function reconfigureSandbox(ctx, input) {
   const profileDir = path4.join(record.home, "profiles", record.profile);
   const packageFile = path4.join(profileDir, "package.json");
   const bundles = input.bundles && input.bundles.length ? resolveBundles(input.bundles) : record.bundles;
-  await import("node:fs/promises").then((fsp4) => fsp4.writeFile(packageFile, profilePackageJson(bundles)));
+  await import("node:fs/promises").then((fsp5) => fsp5.writeFile(packageFile, profilePackageJson(bundles)));
   const check = await runCommand([...DUMP_CONFIG_ARGS], {
     cwd: record.workspace,
     env: sandboxEnv(record.home, path4.join(path4.dirname(record.home), "agents")),
     stdio: ["ignore", "pipe", "pipe"]
   }, COMMAND_TIMEOUT_MS);
   if (check.code !== 0) {
-    await import("node:fs/promises").then((fsp4) => fsp4.writeFile(packageFile, profilePackageJson(record.bundles)));
+    await import("node:fs/promises").then((fsp5) => fsp5.writeFile(packageFile, profilePackageJson(record.bundles)));
     const detail = (check.err || check.out).trim().split("\n").slice(-4).join(" | ");
     return { ok: false, stage: "dump-config", detail };
   }
@@ -614,15 +632,24 @@ async function dispatch(manager, method, route, query, body) {
 }
 
 // src/components/sandbox-manager/register.ts
-var ROUTE_PREFIX = "/__sbx";
 function registerSandboxManager(ctx) {
   const web = ctx.get("webServer");
   if (!web) return;
   const manager = createManager();
   const handler = async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    const route = url.pathname.replace(/^\/__sbx\/?/, "");
+    const route = stripRoutePrefix(url.pathname);
     try {
+      if (route === STYLESHEET_ROUTE && (req.method ?? "GET") === "GET") {
+        const css = await readStylesheet();
+        res.writeHead(200, {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-cache",
+          "content-length": Buffer.byteLength(css)
+        });
+        res.end(css);
+        return;
+      }
       const result = await dispatch(manager, req.method ?? "GET", route, url.searchParams, () => readJsonBody(req));
       sendJson(res, 200, { ok: true, ...typeof result === "object" && result ? result : { value: result } });
     } catch (error) {

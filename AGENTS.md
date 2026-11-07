@@ -11,14 +11,15 @@ dsh-dev-sandbox/
 ├── pnpm-lock.yaml        # 依赖锁，--frozen-lockfile 的判据
 ├── pnpm-workspace.yaml   # allowBuilds：决定 esbuild postinstall 是否执行
 ├── cordis.patch.yml      # 往 profile 里插入一个 host 行
-├── build.mjs             # esbuild 双入口：host 出 ESM，client 出 ModuleLoader 可加载的 IIFE
+├── build.mjs             # esbuild 三入口：host 出 ESM，client 出 ModuleLoader 可加载的 IIFE，样式出独立 CSS
 ├── tsconfig.json         # strict + noUncheckedIndexedAccess
 ├── icon.svg              # 插件图标
 ├── README.md             # 面向使用者：安装、面板、隔离边界、已知限制
 ├── AGENTS.md             # 本文件：结构索引与提交纪律
 ├── dist/
 │   ├── index.js          # 构建产物，host 半侧
-│   └── client.js         # 构建产物，client 半侧
+│   ├── client.js         # 构建产物，client 半侧
+│   └── panel.css         # 构建产物，面板的外部样式表
 └── src/
     ├── entries/          # 只做装配，不放逻辑
     │   ├── host.ts       # export apply(ctx)
@@ -32,6 +33,7 @@ dsh-dev-sandbox/
     │   ├── state.ts      # StateStore：串行队列 + 原子写
     │   ├── sessionLog.ts # 会话文件枚举、zstd 解压、事件摘要
     │   ├── http.ts       # sendJson / readJsonBody
+    │   ├── routes.ts     # 路由前缀与样式表路径，host 与 client 共用
     │   └── api.ts        # 面板侧的 /__sbx 客户端
     └── components/
         ├── sandbox-manager/      # host 可注册组件
@@ -42,6 +44,7 @@ dsh-dev-sandbox/
         │   ├── lifecycle.ts      # create / destroy
         │   ├── inspect.ts        # list / tail / log
         │   ├── reconfigure.ts    # dump-config 预检与回滚
+        │   ├── assets.ts         # 读取构建产物 panel.css
         │   ├── routes.ts         # 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
         │   └── register.ts       # 注册 /__sbx
@@ -50,7 +53,8 @@ dsh-dev-sandbox/
             ├── types.ts          # 面板本地类型
             ├── api.ts            # 动作绑定
             ├── hooks.ts          # useSandboxes
-            ├── styles.ts         # PANEL_CSS
+            ├── panel.css         # 全部样式，由 host 作为外部样式表提供
+            ├── stylesheet.ts     # 注入 <link>，幂等
             ├── panel.ts          # 组合与动作编排
             ├── register.ts       # 注册 settings.section
             └── parts/
@@ -64,10 +68,11 @@ dsh-dev-sandbox/
 | 想改什么 | 动哪里 |
 | --- | --- |
 | 面板文案、轮询间隔、显示上限 | `src/components/sandbox-panel/config.ts` |
-| 面板视觉、布局、间距 | `src/components/sandbox-panel/styles.ts` 与 `parts/` |
+| 面板视觉、布局、间距 | `src/components/sandbox-panel/panel.css` 与 `parts/` |
 | 面板怎么取数据、怎么轮询 | `src/components/sandbox-panel/api.ts`、`hooks.ts` |
 | 面板在设置页的位置 | `src/components/sandbox-panel/config.ts` 的 `PANEL_ORDER` |
-| 新增一个接口 | `sandbox-manager/routes.ts` 加分支，`register.ts` 一般不用改 |
+| 新增一个 JSON 接口 | `sandbox-manager/routes.ts` 的 dispatch 表加分支 |
+| 新增一个静态资源路由 | `sandbox-manager/register.ts` 的 prefix handler 加分支，路径常量放 `shared/routes.ts` |
 | 创建、销毁的流程 | `src/components/sandbox-manager/lifecycle.ts` |
 | 启动参数、端口策略 | `src/components/sandbox-manager/config.ts` 的 `BOOT_ARGS` |
 | profile 里放什么、凭据怎么给 | `src/components/sandbox-manager/profile.ts` |
@@ -85,7 +90,7 @@ dsh-dev-sandbox/
 2. `src/entries/host.ts` 与 `src/entries/client.ts`，确认装配关系。
 3. 按上表跳到具体文件。
 
-改客户端产物（`sandbox-panel/`、`shared/api.ts`、`entries/client.ts`、`build.mjs` 的 banner/footer）之后必须 bump `version` 并重装，宿主按版本缓存字节。
+改 client 图（`sandbox-panel/*.ts`、`shared/api.ts`、`entries/client.ts`、`build.mjs` 的 banner/footer）之后必须 bump `version` 并重装，宿主按版本缓存字节。只改 `panel.css` 不必 bump，但仍要重建并提交 `dist/panel.css`。
 
 # 提交纪律
 
@@ -118,7 +123,7 @@ dsh-dev-sandbox/
 - 运行时依赖越界。host 图（`build.mjs` 里的 `packages: "external"`）只允许 `node:` 内置模块；client 图只允许 `react` 与仓库内模块，其余第三方包会被 bundle 进 `dist/client.js`。判据是 diff 里的裸 import，不是构建是否通过。
 - 改了 `package.json` 的任何依赖字段（`dependencies`、`devDependencies`、`peerDependencies`、`pnpm.overrides`）却没有同步 `pnpm-lock.yaml`。判据就是第 3 步的 `--frozen-lockfile`。
 - README 与实际行为不一致。只核这三项，逐条对代码：安装命令里的仓库地址、`/__sbx` 接口路径与方法、两个环境变量名。
-- 「文件树」与 `git ls-files` 不一致。判定方法：先按第 1 步跑 `git add -N`，再跑 `git diff --name-status` 取 A/D/R 两侧的路径，最后与 `git ls-files` 全量对差。只改文件内容、不增删文件时不触发；根文件与 `src/` 同等对待。
+- 「文件树」与 `git ls-files` 不一致。判定方法：先按第 1 步跑 `git add -N`，再跑 `git diff --name-status` 取 A/D/R 两侧的路径；`git ls-files` 仍含未暂存的删除项，对差前要扣掉 `git status` 里 ` D` 的路径。只改文件内容、不增删文件时不触发；根文件与 `src/` 同等对待。
 
 ## 不阻塞但要在结论里提示
 
@@ -141,7 +146,8 @@ tree 的取法：在真正 `git add <文件>` 之后、`git commit` 之前跑 `g
 ## 版本与产物
 
 - `dist/` 提交进仓库：GitHub 安装时按 `files` 从仓库取这些文件，漏提交或忘记 build 会装出坏包。
-- 改客户端产物必须 bump `version`，宿主按版本缓存字节，不 bump 会继续供旧产物。
+- 构建产物有三个：`dist/index.js`（host 半侧）、`dist/client.js`（client 图）、`dist/panel.css`（外部样式表）。
+- 改 client 图必须 bump `version`，宿主按版本缓存字节。只改 `panel.css` 不用 bump，但它也不会实时生效：host 首次请求时读取并缓存在模块作用域里，改完要 `pnpm build` 并重启宿主，否则继续返回旧样式。
 - 构建 `pnpm build`，类型检查 `pnpm typecheck`。
 
 ## 平台

@@ -1,4 +1,5 @@
-/** 面板到宿主的最小 HTTP 客户端，只走同源 /__sbx。 */
+/** 面板到宿主的最小 HTTP 客户端，地址由 shared/routes 统一拼装。 */
+import { routeUrl } from "./routes.ts";
 
 interface Envelope {
   ok?: boolean;
@@ -6,7 +7,7 @@ interface Envelope {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/__sbx/${path}`, {
+  const response = await fetch(routeUrl(path), {
     credentials: "same-origin",
     headers: init?.body ? { "content-type": "application/json" } : undefined,
     ...init,

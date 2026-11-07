@@ -109,7 +109,7 @@ src/
 
 ```sh
 pnpm install
-pnpm build      # esbuild：host 打 ESM，client 打 ModuleLoader 可加载的 IIFE
+pnpm build      # esbuild：host 打 ESM，client 打 ModuleLoader 可加载的 IIFE，样式打成独立 CSS
 pnpm typecheck  # tsc --noEmit，strict + noUncheckedIndexedAccess
 ```
 
