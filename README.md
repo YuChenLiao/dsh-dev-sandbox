@@ -16,7 +16,7 @@ dsh plugin --profile <profile> add github:YuChenLiao/dsh-dev-sandbox
 
 `<profile>` 换成在用的 profile，例如 `desktop` 或 `web`。仓库里提交了 `dist/`，安装后不需要再构建，也不需要 git 之外的构建工具。
 
-重启 `dsh` 后打开 设置 → 沙箱。卸载：
+重启 `dsh` 后打开面板：装了 `dsh-better-sidebar` 就在侧栏找「沙箱」，否则在 设置 → 沙箱。卸载：
 
 ```sh
 dsh plugin --profile <profile> remove dsh-dev-sandbox

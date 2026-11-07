@@ -35,6 +35,11 @@ export async function dispatch(
     if (!id) throw new SandboxError("缺少 id", "missing-id");
     return manager.tail({ id, limit: Number(query.get("limit") ?? 24) });
   }
+  if (route === "status" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("缺少 id", "missing-id");
+    return manager.status(id);
+  }
   if (route === "log" && method === "GET") {
     const id = query.get("id");
     if (!id) throw new SandboxError("缺少 id", "missing-id");

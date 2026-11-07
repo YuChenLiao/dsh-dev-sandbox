@@ -56,11 +56,24 @@ var __DSH_DEV_SANDBOX__ = (() => {
     noSessions: "\u8FD9\u4E2A\u6C99\u7BB1\u8FD8\u6CA1\u6709\u5BF9\u8BDD\u3002\u5728\u5B83\u81EA\u5DF1\u7684\u9875\u9762\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u3002",
     footnote: "\u9996\u6B21\u542F\u52A8\u8981\u7B49\u5BBF\u4E3B\u5B8C\u6210\u7EC4\u5408\uFF0C\u901A\u5E38\u5341\u51E0\u79D2\u3002\u521B\u5EFA\u540E\u4F1A\u81EA\u52A8\u7B49\u5B83\u5C31\u7EEA\u518D\u51FA\u73B0\u5728\u5217\u8868\u91CC\u3002",
     sessionsUnit: " \u4E2A\u4F1A\u8BDD",
-    bundlesUnit: " \u4E2A bundle"
+    bundlesUnit: " \u4E2A bundle",
+    detail: "\u8BE6\u60C5",
+    back: "\u8FD4\u56DE",
+    live: "\u8FD0\u884C\u4E2D",
+    dead: "\u672A\u8FD0\u884C",
+    kvPort: "\u7AEF\u53E3",
+    kvPid: "\u8FDB\u7A0B",
+    kvPolicy: "\u6743\u9650",
+    kvSessions: "\u4F1A\u8BDD",
+    kvBundles: "bundle",
+    kvLive: "\u72B6\u6001",
+    clientGraph: "\u5BA2\u6237\u7AEF\u56FE",
+    recentEvents: "\u6700\u8FD1\u7684\u5BF9\u8BDD",
+    noClientGraph: "\u6C99\u7BB1\u6CA1\u6709\u5728\u76D1\u542C\uFF0C\u8BFB\u4E0D\u5230\u5BA2\u6237\u7AEF\u56FE\u3002"
   };
 
   // src/components/sandbox-panel/panel.ts
-  var import_react5 = __require("react");
+  var import_react6 = __require("react");
 
   // src/shared/routes.ts
   var ROUTE_PREFIX = "/__sbx";
@@ -98,6 +111,7 @@ var __DSH_DEV_SANDBOX__ = (() => {
   var createSandbox = (input) => apiPost("create", input);
   var destroySandbox = (id) => apiPost("destroy", { id });
   var fetchTail = (id, limit) => apiGet(`tail?id=${encodeURIComponent(id)}&limit=${limit}`);
+  var fetchStatus = (id) => apiGet(`status?id=${encodeURIComponent(id)}`);
 
   // src/components/sandbox-panel/hooks.ts
   var import_react = __require("react");
@@ -156,7 +170,7 @@ var __DSH_DEV_SANDBOX__ = (() => {
     );
   }
 
-  // src/components/sandbox-panel/parts/row.ts
+  // src/components/sandbox-panel/parts/detail.ts
   var import_react4 = __require("react");
 
   // src/components/sandbox-panel/parts/events.ts
@@ -173,7 +187,89 @@ var __DSH_DEV_SANDBOX__ = (() => {
     )));
   }
 
+  // src/components/sandbox-panel/parts/detail.ts
+  var row = (label, value) => (0, import_react4.createElement)(
+    "div",
+    { className: "sbx-kv", key: label },
+    (0, import_react4.createElement)("span", { className: "sbx-kv-key" }, label),
+    (0, import_react4.createElement)("span", { className: "sbx-kv-val" }, value)
+  );
+  function SandboxDetail(props) {
+    const { sandbox } = props;
+    const [status, setStatus] = (0, import_react4.useState)(null);
+    const [events, setEvents] = (0, import_react4.useState)(null);
+    const [error, setError] = (0, import_react4.useState)(null);
+    const load = (0, import_react4.useCallback)(async () => {
+      setError(null);
+      try {
+        const [next, tail] = await Promise.all([
+          fetchStatus(sandbox.id),
+          fetchTail(sandbox.id, TAIL_LIMIT)
+        ]);
+        setStatus(next);
+        setEvents(tail.events);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    }, [sandbox.id]);
+    (0, import_react4.useEffect)(() => {
+      void load();
+    }, [load]);
+    const live = Boolean(status?.alive && status.listening);
+    const body = () => {
+      if (error) return (0, import_react4.createElement)("div", { className: "sbx-err" }, error);
+      if (!status) return (0, import_react4.createElement)("div", { className: "sbx-empty" }, TEXTS.loading);
+      return (0, import_react4.createElement)(
+        "div",
+        { className: "sbx-detail-body" },
+        (0, import_react4.createElement)(
+          "div",
+          { className: "sbx-kvs" },
+          row(TEXTS.kvLive, live ? TEXTS.live : TEXTS.dead),
+          row(TEXTS.kvPort, `:${status.port}`),
+          row(TEXTS.kvPid, String(status.pid)),
+          row(TEXTS.kvPolicy, status.policy),
+          row(TEXTS.kvSessions, String(status.sessions)),
+          row(TEXTS.kvBundles, status.bundles.join(" \xB7 ") || "\u2014")
+        ),
+        (0, import_react4.createElement)("div", { className: "sbx-sub-title" }, TEXTS.clientGraph),
+        status.clientEntries.length > 0 ? (0, import_react4.createElement)("div", { className: "sbx-chips" }, ...status.clientEntries.map((entry) => (0, import_react4.createElement)("span", { className: "sbx-chip", key: entry }, entry))) : (0, import_react4.createElement)("div", { className: "sbx-empty" }, TEXTS.noClientGraph),
+        status.errors.length > 0 ? (0, import_react4.createElement)("div", { className: "sbx-err" }, ...status.errors.map((line) => (0, import_react4.createElement)("div", { key: line }, line))) : null,
+        (0, import_react4.createElement)("div", { className: "sbx-sub-title" }, TEXTS.recentEvents),
+        (0, import_react4.createElement)(EventList, { events: events ?? void 0 })
+      );
+    };
+    return (0, import_react4.createElement)(
+      "div",
+      { className: "sbx-root sbx-detail" },
+      (0, import_react4.createElement)(
+        "div",
+        { className: "sbx-head" },
+        (0, import_react4.createElement)("button", { className: "sbx-btn", type: "button", onClick: props.onBack }, TEXTS.back),
+        (0, import_react4.createElement)(
+          "div",
+          { className: "sbx-grow" },
+          (0, import_react4.createElement)("div", { className: "sbx-title" }, sandbox.name),
+          (0, import_react4.createElement)("div", { className: "sbx-sub" }, sandbox.id)
+        ),
+        (0, import_react4.createElement)("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
+        (0, import_react4.createElement)(
+          "button",
+          { className: "sbx-btn", type: "button", disabled: props.busy, onClick: () => void load() },
+          TEXTS.refresh
+        ),
+        (0, import_react4.createElement)(
+          "button",
+          { className: "sbx-btn sbx-btn-danger", type: "button", disabled: props.busy, onClick: props.onDestroy },
+          TEXTS.destroy
+        )
+      ),
+      body()
+    );
+  }
+
   // src/components/sandbox-panel/parts/row.ts
+  var import_react5 = __require("react");
   var ago = (at) => {
     if (!at) return "";
     const seconds = Math.max(0, Math.round((Date.now() - at) / 1e3));
@@ -185,74 +281,85 @@ var __DSH_DEV_SANDBOX__ = (() => {
   function SandboxRow(props) {
     const { sandbox, expanded, events, busy } = props;
     const live = sandbox.alive && sandbox.listening;
-    return (0, import_react4.createElement)(
+    return (0, import_react5.createElement)(
       "div",
       { className: "sbx-row" },
-      (0, import_react4.createElement)(
+      (0, import_react5.createElement)(
         "div",
         { className: "sbx-row-main" },
-        (0, import_react4.createElement)("span", { className: "sbx-dot" + (live ? " sbx-dot-live" : ""), "aria-hidden": true }),
-        (0, import_react4.createElement)("span", { className: "sbx-name" }, sandbox.name),
-        (0, import_react4.createElement)("span", { className: "sbx-mono" }, sandbox.id),
-        (0, import_react4.createElement)(
+        (0, import_react5.createElement)("span", { className: "sbx-dot" + (live ? " sbx-dot-live" : ""), "aria-hidden": true }),
+        (0, import_react5.createElement)("span", { className: "sbx-name" }, sandbox.name),
+        (0, import_react5.createElement)("span", { className: "sbx-mono" }, sandbox.id),
+        (0, import_react5.createElement)(
           "div",
           { className: "sbx-meta" },
-          (0, import_react4.createElement)("span", null, `:${sandbox.port}`),
-          (0, import_react4.createElement)("span", null, `${sandbox.sessions}${TEXTS.sessionsUnit}`),
-          (0, import_react4.createElement)("span", null, `${sandbox.bundles.length}${TEXTS.bundlesUnit}`),
-          (0, import_react4.createElement)("span", null, ago(sandbox.createdAt))
+          (0, import_react5.createElement)("span", null, `:${sandbox.port}`),
+          (0, import_react5.createElement)("span", null, `${sandbox.sessions}${TEXTS.sessionsUnit}`),
+          (0, import_react5.createElement)("span", null, `${sandbox.bundles.length}${TEXTS.bundlesUnit}`),
+          (0, import_react5.createElement)("span", null, ago(sandbox.createdAt))
         ),
-        (0, import_react4.createElement)(
+        (0, import_react5.createElement)(
           "div",
           { className: "sbx-actions" },
-          (0, import_react4.createElement)(
+          (0, import_react5.createElement)(
             "button",
             { className: "sbx-btn", type: "button", onClick: props.onToggle },
             expanded ? TEXTS.collapse : TEXTS.tail
           ),
-          (0, import_react4.createElement)("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
-          (0, import_react4.createElement)(
+          (0, import_react5.createElement)("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
+          (0, import_react5.createElement)("button", { className: "sbx-btn", type: "button", onClick: props.onDetail }, TEXTS.detail),
+          (0, import_react5.createElement)(
             "button",
             { className: "sbx-btn sbx-btn-danger", type: "button", disabled: busy, onClick: props.onDestroy },
             TEXTS.destroy
           )
         )
       ),
-      expanded ? (0, import_react4.createElement)("div", { className: "sbx-body" }, (0, import_react4.createElement)(EventList, { events })) : null
+      expanded ? (0, import_react5.createElement)("div", { className: "sbx-body" }, (0, import_react5.createElement)(EventList, { events })) : null
     );
   }
 
   // src/components/sandbox-panel/panel.ts
+  var openSandbox = (sandbox) => {
+    window.open(
+      `http://127.0.0.1:${sandbox.port}/?token=${encodeURIComponent(sandbox.token)}`,
+      "_blank",
+      "noopener"
+    );
+  };
+  var asMessage = (caught) => caught instanceof Error ? caught.message : String(caught);
   function SandboxPanel() {
     const { items, error, setError, reload } = useSandboxes();
-    const [busy, setBusy] = (0, import_react5.useState)(false);
-    const [expanded, setExpanded] = (0, import_react5.useState)(null);
-    const [cache, setCache] = (0, import_react5.useState)({});
-    const handleCreate = (0, import_react5.useCallback)(async (input) => {
+    const [busy, setBusy] = (0, import_react6.useState)(false);
+    const [expanded, setExpanded] = (0, import_react6.useState)(null);
+    const [selected, setSelected] = (0, import_react6.useState)(null);
+    const [cache, setCache] = (0, import_react6.useState)({});
+    const handleCreate = (0, import_react6.useCallback)(async (input) => {
       setBusy(true);
       try {
         await createSandbox(input);
         await reload();
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
+        setError(asMessage(caught));
       } finally {
         setBusy(false);
       }
     }, [reload, setError]);
-    const handleDestroy = (0, import_react5.useCallback)(async (id) => {
+    const handleDestroy = (0, import_react6.useCallback)(async (id) => {
       if (!window.confirm(TEXTS.confirmDestroy)) return;
       setBusy(true);
       try {
         await destroySandbox(id);
         setExpanded((current) => current === id ? null : current);
+        setSelected((current) => current === id ? null : current);
         await reload();
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
+        setError(asMessage(caught));
       } finally {
         setBusy(false);
       }
     }, [reload, setError]);
-    const handleToggle = (0, import_react5.useCallback)(async (id) => {
+    const handleToggle = (0, import_react6.useCallback)(async (id) => {
       if (expanded === id) {
         setExpanded(null);
         return;
@@ -262,49 +369,56 @@ var __DSH_DEV_SANDBOX__ = (() => {
         const data = await fetchTail(id, TAIL_LIMIT);
         setCache((current) => ({ ...current, [id]: data.events }));
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
+        setError(asMessage(caught));
       }
     }, [expanded, setError]);
+    const picked = selected && items ? items.find((item) => item.id === selected) : void 0;
+    if (picked) {
+      return (0, import_react6.createElement)(SandboxDetail, {
+        sandbox: picked,
+        busy,
+        onBack: () => setSelected(null),
+        onOpen: () => openSandbox(picked),
+        onDestroy: () => void handleDestroy(picked.id)
+      });
+    }
     const rows = () => {
-      if (items === null) return (0, import_react5.createElement)("div", { className: "sbx-empty" }, TEXTS.loading);
-      if (items.length === 0) return (0, import_react5.createElement)("div", { className: "sbx-empty" }, TEXTS.empty);
-      return items.map((sandbox) => (0, import_react5.createElement)(SandboxRow, {
+      if (items === null) return (0, import_react6.createElement)("div", { className: "sbx-empty" }, TEXTS.loading);
+      if (items.length === 0) return (0, import_react6.createElement)("div", { className: "sbx-empty" }, TEXTS.empty);
+      return items.map((sandbox) => (0, import_react6.createElement)(SandboxRow, {
         key: sandbox.id,
         sandbox,
         expanded: expanded === sandbox.id,
         events: cache[sandbox.id],
         busy,
         onToggle: () => void handleToggle(sandbox.id),
-        onOpen: () => window.open(
-          `http://127.0.0.1:${sandbox.port}/?token=${encodeURIComponent(sandbox.token)}`,
-          "_blank",
-          "noopener"
-        ),
+        onOpen: () => openSandbox(sandbox),
+        onDetail: () => setSelected(sandbox.id),
         onDestroy: () => void handleDestroy(sandbox.id)
       }));
     };
-    return (0, import_react5.createElement)(
+    return (0, import_react6.createElement)(
       "div",
       { className: "sbx-root" },
-      (0, import_react5.createElement)(
+      (0, import_react6.createElement)(
         "div",
         { className: "sbx-head" },
-        (0, import_react5.createElement)(
+        (0, import_react6.createElement)(
           "div",
           { className: "sbx-grow" },
-          (0, import_react5.createElement)("div", { className: "sbx-title" }, TEXTS.title),
-          (0, import_react5.createElement)("div", { className: "sbx-sub" }, TEXTS.subtitle)
+          (0, import_react6.createElement)("div", { className: "sbx-title" }, TEXTS.title),
+          (0, import_react6.createElement)("div", { className: "sbx-sub" }, TEXTS.subtitle)
         ),
-        (0, import_react5.createElement)(
+        (0, import_react6.createElement)(
           "button",
           { className: "sbx-btn", type: "button", onClick: () => void reload(), disabled: busy },
           TEXTS.refresh
         )
       ),
-      error ? (0, import_react5.createElement)("div", { className: "sbx-err" }, error) : null,
-      (0, import_react5.createElement)(CreateForm, { busy, onCreate: (input) => void handleCreate(input) }),
+      error ? (0, import_react6.createElement)("div", { className: "sbx-err" }, error) : null,
+      (0, import_react6.createElement)(CreateForm, { busy, onCreate: (input) => void handleCreate(input) }),
       rows(),
-      (0, import_react5.createElement)("div", { className: "sbx-note" }, TEXTS.footnote)
+      (0, import_react6.createElement)("div", { className: "sbx-note" }, TEXTS.footnote)
     );
   }
 
@@ -322,6 +436,16 @@ var __DSH_DEV_SANDBOX__ = (() => {
   // src/components/sandbox-panel/register.ts
   function registerPanel(ctx) {
     ensureStylesheet();
+    let sidebar;
+    try {
+      sidebar = ctx.get?.("betterSidebar");
+    } catch {
+      sidebar = void 0;
+    }
+    if (sidebar && typeof sidebar.registerTab === "function") {
+      sidebar.registerTab({ id: PANEL_ID, title: TEXTS.navLabel, component: SandboxPanel });
+      return;
+    }
     ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(
       {
         name: SLOT_NAME,

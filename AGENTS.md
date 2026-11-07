@@ -61,10 +61,11 @@ dsh-dev-sandbox/
             ├── panel.css         # 全部样式，由 host 作为外部样式表提供
             ├── stylesheet.ts     # 注入 <link>，幂等
             ├── panel.ts          # 组合与动作编排
-            ├── register.ts       # 注册 settings.section
+            ├── register.ts       # 双通道：better-sidebar 的 tab，否则 settings.section
             └── parts/
                 ├── form.ts       # 新建表单
                 ├── row.ts        # 实例行
+                ├── detail.ts     # 沙箱详情：状态、客户端图、日志错误、最近对话
                 └── events.ts     # 对话事件列表
 ```
 
@@ -74,8 +75,10 @@ dsh-dev-sandbox/
 | --- | --- |
 | 面板文案、轮询间隔、显示上限 | `src/components/sandbox-panel/config.ts` |
 | 面板视觉、布局、间距 | `src/components/sandbox-panel/panel.css` 与 `parts/` |
+| 沙箱详情视图 | `src/components/sandbox-panel/parts/detail.ts` 与 `api.ts` 的 `fetchStatus` |
 | 面板怎么取数据、怎么轮询 | `src/components/sandbox-panel/api.ts`、`hooks.ts` |
 | 面板在设置页的位置 | `src/components/sandbox-panel/config.ts` 的 `PANEL_ORDER` |
+| 面板入口（侧栏或设置页） | `src/components/sandbox-panel/register.ts` 的双通道 |
 | 新增一个 JSON 接口 | `sandbox-manager/routes.ts` 的 dispatch 表加分支 |
 | 新增一个静态资源路由 | `sandbox-manager/register.ts` 的 prefix handler 加分支，路径常量放 `shared/routes.ts` |
 | 新增或修改给模型的工具 | `sandbox-manager/tools.ts`，逻辑落在对应组件文件 |

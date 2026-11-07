@@ -10,6 +10,7 @@ export interface SandboxRowProps {
   busy: boolean;
   onToggle: () => void;
   onOpen: () => void;
+  onDetail: () => void;
   onDestroy: () => void;
 }
 
@@ -41,6 +42,7 @@ export function SandboxRow(props: SandboxRowProps) {
         h("button", { className: "sbx-btn", type: "button", onClick: props.onToggle },
           expanded ? TEXTS.collapse : TEXTS.tail),
         h("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
+        h("button", { className: "sbx-btn", type: "button", onClick: props.onDetail }, TEXTS.detail),
         h("button", { className: "sbx-btn sbx-btn-danger", type: "button", disabled: busy, onClick: props.onDestroy },
           TEXTS.destroy))),
     expanded ? h("div", { className: "sbx-body" }, h(EventList, { events })) : null);

@@ -4,6 +4,7 @@ import type {
   SandboxRecord,
   SandboxView,
   SessionEventView,
+  StatusResult,
   TailResult,
 } from "../../shared/types.ts";
 
@@ -22,5 +23,11 @@ export const destroySandbox = (id: string): Promise<DestroyResult> =>
 
 export const fetchTail = (id: string, limit: number): Promise<TailResult> =>
   apiGet<TailResult>(`tail?id=${encodeURIComponent(id)}&limit=${limit}`);
+
+export const fetchStatus = (id: string): Promise<StatusResult> =>
+  apiGet<StatusResult>(`status?id=${encodeURIComponent(id)}`);
+
+export const fetchLog = (id: string, lines: number): Promise<{ text: string }> =>
+  apiGet<{ text: string }>(`log?id=${encodeURIComponent(id)}&lines=${lines}`);
 
 export type { SessionEventView };

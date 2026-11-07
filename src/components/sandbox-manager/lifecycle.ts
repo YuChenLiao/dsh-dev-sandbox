@@ -76,7 +76,8 @@ export async function createSandbox(ctx: ManagerContext, input: CreateSandboxInp
     await sleep(600);
     await fsp.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => undefined);
     if (!log.trim()) throw error;
-    throw new SandboxError(`${asMessage(error)}\n--- boot.log ---\n${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed");
+    // 内层多半已经是带 code 的 SandboxError，再套一层只会得到 `[create-failed] [boot-failed] …`。
+    throw new SandboxError(`${asMessage(error)}\n--- boot.log ---\n${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed", true);
   }
 }
 

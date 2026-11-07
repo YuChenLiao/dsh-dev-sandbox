@@ -1,7 +1,7 @@
 // src/shared/errors.ts
 var SandboxError = class extends Error {
-  constructor(message, code) {
-    super(`[${code}] ${message}`);
+  constructor(message, code, raw = false) {
+    super(raw ? message : `[${code}] ${message}`);
     this.code = code;
     this.name = "SandboxError";
   }
@@ -719,7 +719,7 @@ async function createSandbox(ctx, input) {
     if (!log.trim()) throw error;
     throw new SandboxError(`${asMessage(error)}
 --- boot.log ---
-${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed");
+${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed", true);
   }
 }
 async function destroySandbox(ctx, input) {
@@ -926,6 +926,11 @@ async function dispatch(manager, method, route, query, body) {
     const id = query.get("id");
     if (!id) throw new SandboxError("\u7F3A\u5C11 id", "missing-id");
     return manager.tail({ id, limit: Number(query.get("limit") ?? 24) });
+  }
+  if (route === "status" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("\u7F3A\u5C11 id", "missing-id");
+    return manager.status(id);
   }
   if (route === "log" && method === "GET") {
     const id = query.get("id");
