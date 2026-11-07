@@ -105,9 +105,10 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.sect
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DSH_SANDBOX_ROOT` | `~/.dsh-dev-sandbox/instances` | 实例根目录，账本与所有实例都在它下面 |
-| `DSH_SANDBOX_DSH_BIN` | 空，用 PATH 上的 `dsh` | 指定 `@deepseek-ai/dsh/lib/bin.js` 的绝对路径 |
+| `DSH_SANDBOX_DSH_BIN` | 空，沿 `PATH` 找 `node_modules/@deepseek-ai/dsh/lib/bin.js` | 指定 `bin.js` 的绝对路径。PATH 上那份通常与桌面宿主不是同一个安装，测出来的结论不可移植，这时必须显式指定；都找不到时报 `dsh-bin-missing`，不会退回 shell |
+| `DSH_SANDBOX_DSH_NODE` | 空，沿 `PATH` 找 `node` | 指定解释 bin.js 的 node；找不到时创建报 `node-missing`，不会退回 Electron 内置的 node |
 
-桌面版的 `dsh` 在 `app.asar` 里，PATH 上的 `dsh` 可能是另一个版本。两者不一致时插件测出来的结论不可移植，这时把 `DSH_SANDBOX_DSH_BIN` 指向与宿主同版本的 `bin.js`。宿主是 Electron 二进制，该分支会自动补 `ELECTRON_RUN_AS_NODE=1` 再执行。
+桌面版的 `dsh` 在 `app.asar` 里，与 PATH 上的那份是两个安装。两者不一致时插件测出来的结论不可移植，这时把 `DSH_SANDBOX_DSH_BIN` 指向与宿主同版本的 `bin.js`。沙箱永远以 `node bin.js` 的形式启动，文本参数只作为 argv 传递，不经过任何 shell；选中的 node 与 dsh 路径写在每个实例的 `boot.log` 第一行。
 
 ## 目录结构
 

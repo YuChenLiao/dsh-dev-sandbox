@@ -1,6 +1,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_BUNDLES, PACKAGE_NAME, SANDBOX_PROFILE } from "../../shared/config.ts";
+import { SandboxError } from "../../shared/errors.ts";
 import { workHome } from "../../shared/paths.ts";
 import {
   API_KEY_ENV,
@@ -24,10 +25,14 @@ export function profilePackageJson(bundles: readonly string[]): string {
   }, null, 2)}\n`;
 }
 
-/** bundles 只接受合法包名：这个列表会写进 profile，路径式字符串不该进来。 */
+/** bundles 只接受合法包名；有非法项直接报错，不静默丢弃（否则调用方以为生效了）。 */
 export function resolveBundles(bundles: readonly string[] | undefined): string[] {
-  const valid = (bundles ?? []).filter((item) => PACKAGE_NAME.test(item));
-  return valid.length ? valid : [...DEFAULT_BUNDLES];
+  if (!bundles || bundles.length === 0) return [...DEFAULT_BUNDLES];
+  const invalid = bundles.filter((item) => !PACKAGE_NAME.test(item));
+  if (invalid.length > 0) {
+    throw new SandboxError(`bundle 不是合法包名：${invalid.join(", ")}`, "invalid-bundle");
+  }
+  return [...bundles];
 }
 
 /** 建目录 + 写 profile 的两份文件；补丁层总是重写，把 policy 钉在 workspace。 */

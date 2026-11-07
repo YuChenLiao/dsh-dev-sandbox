@@ -7,7 +7,7 @@ import {
   READY_TIMEOUT_MS,
 } from "../../shared/config.ts";
 import { SandboxError } from "../../shared/errors.ts";
-import { portOpen, sleep, spawnDsh, killTree } from "../../shared/process.ts";
+import { portOpen, sleep, spawnDsh, killTree, runtimeDescription } from "../../shared/process.ts";
 import { BOOT_ARGS } from "./config.ts";
 import type { SandboxPaths } from "./types.ts";
 
@@ -25,7 +25,9 @@ export interface BootedSandbox {
  * 之前正是因为这一点拿不到启动地址。
  */
 export async function boot(paths: SandboxPaths, env: NodeJS.ProcessEnv): Promise<BootedSandbox> {
-  fs.writeFileSync(paths.logFile, "");
+  // 先把用的是哪份 node 与 dsh 记下来：换过运行期之后，「为什么会崩」靠这一行定位。
+  const runtime = runtimeDescription();
+  fs.writeFileSync(paths.logFile, `[sandbox] runtime: ${runtime}\n`);
   const child = spawnDsh([...BOOT_ARGS], { cwd: paths.workspace, env, stdio: ["ignore", "pipe", "pipe"] });
 
   let buffer = "";

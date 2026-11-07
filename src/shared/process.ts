@@ -45,32 +45,49 @@ export function sandboxEnv(home: string, agentsHome: string): NodeJS.ProcessEnv 
 }
 
 /**
- * 解析 dsh 的 bin.js。找不到就报错，绝不再退回 cmd.exe —— 参数里有模型给的文本，
- * 过 shell 会把 & | > 之类的字符当命令解释。
+ * 解析 dsh 的 bin.js。顺序：显式变量 → 宿主自己就是 bin.js → PATH 上的 npm 全局布局。
+ * argv[1] 分支要回读同级 package.json 确认 name，否则「包名恰好叫 dsh」的布局会误命中。
  */
 export function dshBinPath(): string {
   const explicit = process.env.DSH_SANDBOX_DSH_BIN;
   if (explicit) return explicit;
+
+  const self = process.argv[1];
+  if (self && /[\\/]dsh[\\/]lib[\\/]bin\.js$/.test(self) && fs.existsSync(self) && isDshPackage(self)) {
+    return self;
+  }
+
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     if (!dir) continue;
     const candidate = path.join(dir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
     if (fs.existsSync(candidate)) return candidate;
   }
-  throw new SandboxError("找不到 dsh 的 bin.js，请设置 DSH_SANDBOX_DSH_BIN 指向 @deepseek-ai/dsh/lib/bin.js", "dsh-bin-missing");
+  throw new SandboxError(
+    "找不到 dsh 的 bin.js：设 DSH_SANDBOX_DSH_BIN 指向 @deepseek-ai/dsh/lib/bin.js"
+    + "（桌面版的副本在 app.asar 里，需要显式指定路径）",
+    "dsh-bin-missing",
+  );
 }
 
-export interface SpawnOptions {
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  stdio?: ["ignore", "pipe", "pipe"] | "inherit";
+/** bin.js 在 <pkg>/lib/ 下，回读上一级 package.json 确认这就是 @deepseek-ai/dsh。 */
+function isDshPackage(binPath: string): boolean {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(binPath), "..", "package.json"), "utf8")) as {
+      name?: string;
+    };
+    return manifest.name === "@deepseek-ai/dsh";
+  } catch {
+    return false;
+  }
 }
 
 /**
  * 选一个真正的 node 来跑 bin.js。桌面宿主的 process.execPath 是 Electron 二进制，
- * 虽然 ELECTRON_RUN_AS_NODE 能跑，但它内置的 node 版本与 CLI 安装不一定对得上，
- * 实测会在启动早期崩掉；PATH 上装了 node 就优先用它。
+ * 实测用它跑 bin.js 会在启动早期崩掉，所以找不到 node 时直接报错而不是退回它。
  */
 function nodeExecutable(): string {
+  const explicit = process.env.DSH_SANDBOX_DSH_NODE;
+  if (explicit) return explicit;
   const names = process.platform === "win32" ? ["node.exe", "node.cmd"] : ["node"];
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     if (!dir) continue;
@@ -79,7 +96,18 @@ function nodeExecutable(): string {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
-  return process.execPath;
+  throw new SandboxError("PATH 上找不到 node，无法启动 dsh", "node-missing");
+}
+
+/** 给 boot.log 用的运行期信息：谁在跑 bin.js、跑的是哪份 dsh。 */
+export function runtimeDescription(): string {
+  return `node=${nodeExecutable()} dsh=${dshBinPath()}`;
+}
+
+export interface SpawnOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  stdio?: ["ignore", "pipe", "pipe"] | "inherit";
 }
 
 /** 启动 dsh：永远用 node 直接执行 bin.js，参数作为 argv 传递，不经过任何 shell。 */

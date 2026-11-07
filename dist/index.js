@@ -1,7 +1,7 @@
 // src/shared/errors.ts
 var SandboxError = class extends Error {
   constructor(message, code) {
-    super(message);
+    super(`[${code}] ${message}`);
     this.code = code;
     this.name = "SandboxError";
   }
@@ -45,7 +45,7 @@ var PROBE_TIMEOUT_MS = 800;
 var MAX_BODY_BYTES = 1 << 20;
 var LISTEN_URL_PATTERN = /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([\w-]+)/;
 var BOOT_FAILURE_PATTERN = /failed to load|cannot resolve profile bundle|ERR_UNSUPPORTED/;
-var PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
+var PACKAGE_NAME = /^(?:@[A-Za-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*$/;
 
 // src/shared/http.ts
 function sendJson(res, code, value) {
@@ -267,14 +267,31 @@ function sandboxEnv(home, agentsHome) {
 function dshBinPath() {
   const explicit = process.env.DSH_SANDBOX_DSH_BIN;
   if (explicit) return explicit;
+  const self = process.argv[1];
+  if (self && /[\\/]dsh[\\/]lib[\\/]bin\.js$/.test(self) && fs2.existsSync(self) && isDshPackage(self)) {
+    return self;
+  }
   for (const dir of (process.env.PATH ?? "").split(path2.delimiter)) {
     if (!dir) continue;
     const candidate = path2.join(dir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
     if (fs2.existsSync(candidate)) return candidate;
   }
-  throw new SandboxError("\u627E\u4E0D\u5230 dsh \u7684 bin.js\uFF0C\u8BF7\u8BBE\u7F6E DSH_SANDBOX_DSH_BIN \u6307\u5411 @deepseek-ai/dsh/lib/bin.js", "dsh-bin-missing");
+  throw new SandboxError(
+    "\u627E\u4E0D\u5230 dsh \u7684 bin.js\uFF1A\u8BBE DSH_SANDBOX_DSH_BIN \u6307\u5411 @deepseek-ai/dsh/lib/bin.js\uFF08\u684C\u9762\u7248\u7684\u526F\u672C\u5728 app.asar \u91CC\uFF0C\u9700\u8981\u663E\u5F0F\u6307\u5B9A\u8DEF\u5F84\uFF09",
+    "dsh-bin-missing"
+  );
+}
+function isDshPackage(binPath) {
+  try {
+    const manifest = JSON.parse(fs2.readFileSync(path2.join(path2.dirname(binPath), "..", "package.json"), "utf8"));
+    return manifest.name === "@deepseek-ai/dsh";
+  } catch {
+    return false;
+  }
 }
 function nodeExecutable() {
+  const explicit = process.env.DSH_SANDBOX_DSH_NODE;
+  if (explicit) return explicit;
   const names = process.platform === "win32" ? ["node.exe", "node.cmd"] : ["node"];
   for (const dir of (process.env.PATH ?? "").split(path2.delimiter)) {
     if (!dir) continue;
@@ -283,7 +300,10 @@ function nodeExecutable() {
       if (fs2.existsSync(candidate)) return candidate;
     }
   }
-  return process.execPath;
+  throw new SandboxError("PATH \u4E0A\u627E\u4E0D\u5230 node\uFF0C\u65E0\u6CD5\u542F\u52A8 dsh", "node-missing");
+}
+function runtimeDescription() {
+  return `node=${nodeExecutable()} dsh=${dshBinPath()}`;
 }
 function spawnDsh(args, options) {
   const stdio = options.stdio ?? ["ignore", "pipe", "pipe"];
@@ -511,7 +531,9 @@ import path5 from "node:path";
 // src/components/sandbox-manager/boot.ts
 import fs4 from "node:fs";
 async function boot(paths, env) {
-  fs4.writeFileSync(paths.logFile, "");
+  const runtime = runtimeDescription();
+  fs4.writeFileSync(paths.logFile, `[sandbox] runtime: ${runtime}
+`);
   const child = spawnDsh([...BOOT_ARGS], { cwd: paths.workspace, env, stdio: ["ignore", "pipe", "pipe"] });
   let buffer = "";
   const collect = (chunk) => {
@@ -577,8 +599,12 @@ function profilePackageJson(bundles) {
 `;
 }
 function resolveBundles(bundles) {
-  const valid = (bundles ?? []).filter((item) => PACKAGE_NAME.test(item));
-  return valid.length ? valid : [...DEFAULT_BUNDLES];
+  if (!bundles || bundles.length === 0) return [...DEFAULT_BUNDLES];
+  const invalid = bundles.filter((item) => !PACKAGE_NAME.test(item));
+  if (invalid.length > 0) {
+    throw new SandboxError(`bundle \u4E0D\u662F\u5408\u6CD5\u5305\u540D\uFF1A${invalid.join(", ")}`, "invalid-bundle");
+  }
+  return [...bundles];
 }
 async function writeProfile(paths, bundles) {
   await fsp4.mkdir(paths.profileDir, { recursive: true });

@@ -33,5 +33,8 @@ export const LISTEN_URL_PATTERN = /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([\w-]+)
 /** 启动失败的早期特征，命中就不必等满超时。 */
 export const BOOT_FAILURE_PATTERN = /failed to load|cannot resolve profile bundle|ERR_UNSUPPORTED/;
 
-/** 合法的 npm 包名：工具层与 profile 写入共用一个判据，避免包名被当成路径。 */
-export const PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
+/**
+ * 合法的 npm 包名。首字符允许大写：npm 新包要求小写，但历史包与内部包可以大写。
+ * 路径安全由 insidePath 兜底，这里只负责排除分隔符、空段与 `.`/`..` 段。
+ */
+export const PACKAGE_NAME = /^(?:@[A-Za-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*$/;
