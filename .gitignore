@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# 构建产物 dist/ 故意不忽略：
+# package.json 的 main 与 exports["./client"] 指向 dist/，GitHub 安装时 pnpm 按 files
+# 从仓库里取这些文件；漏提交或改完代码忘记 build，装出来的插件会静默坏掉。
+# 重新生成：pnpm build。改客户端产物后还要 bump version，宿主按版本缓存字节。
+
+# 本地环境与密钥
+.env
+.env.*
+!.env.example
+
+# 运行期产物（把 DSH_SANDBOX_ROOT 指到仓库内时会出现）
+.sandbox/
+instances/
+.trash-*/
+*.log
+
+# 工具与编辑器
+*.tsbuildinfo
+coverage/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# pnpm 本地存储
+.pnpm-store/
