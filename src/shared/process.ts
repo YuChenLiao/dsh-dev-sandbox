@@ -51,7 +51,11 @@ export interface SpawnOptions {
 export function spawnDsh(args: string[], options: SpawnOptions): ChildProcess {
   const bin = process.env.DSH_SANDBOX_DSH_BIN;
   const stdio = options.stdio ?? ["ignore", "pipe", "pipe"];
-  if (bin) return spawn(process.execPath, [bin, ...args], { ...options, stdio, windowsHide: true });
+  if (bin) {
+    // 桌面宿主是 Electron 二进制，用它跑 bin.js 必须先进 node 模式。
+    const env = { ...options.env, ELECTRON_RUN_AS_NODE: "1" };
+    return spawn(process.execPath, [bin, ...args], { ...options, env, stdio, windowsHide: true });
+  }
   const comspec = process.env.ComSpec ?? "cmd.exe";
   return spawn(comspec, ["/d", "/s", "/c", `dsh ${args.join(" ")}`], { ...options, stdio, windowsHide: true });
 }
