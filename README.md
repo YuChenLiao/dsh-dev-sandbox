@@ -94,6 +94,7 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
 | `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
+| `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
 | `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |
 | `sandbox_start` | 用已有目录重启，返回新端口与 token |
 | `sandbox_destroy` | 销毁 |

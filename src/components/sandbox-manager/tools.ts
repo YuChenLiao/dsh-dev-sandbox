@@ -58,7 +58,8 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     description:
       "Run one real conversation turn inside a sandbox and return the assistant text plus the tool names it called. "
       + "This is how a dialogue-facing plugin gets verified. The turn runs on the sandbox's inherited model credentials, "
-      + "so each call costs one real request.",
+      + "so each call costs one real request. "
+      + "For the full event stream of that turn — every tool call with its arguments and result — call sandbox_tail next.",
     parameters: {
       type: "object",
       properties: {
@@ -79,7 +80,8 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     name: "sandbox_status",
     description:
       "Report one sandbox: process, port, session count, loaded bundles, the client bundle ids in its boot graph, "
-      + "and the error lines from its startup log.",
+      + "and the error lines from its startup log. "
+      + "The session count is only a number — use sandbox_tail to read the conversations themselves.",
     parameters: {
       type: "object",
       properties: { id: { type: "string", description: "Sandbox instance id." } },
@@ -89,6 +91,29 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     execute: async (args: unknown) => manager.status((args as { id: string }).id),
+  });
+
+  tools.register({
+    name: "sandbox_tail",
+    description:
+      "Read the most recent events from a sandbox's own session log: user messages, assistant replies, "
+      + "and each tool call paired with its result (arguments included). "
+      + "Use it after sandbox_prompt to see exactly which tools ran and with what arguments, "
+      + "or to read what a human did inside the sandbox's own page. "
+      + "Read-only, and it reads the session file directly, so the sandbox does not need to be running. "
+      + "Returns the newest session's trailing events plus the total event count of that file.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        limit: { type: "number", description: "How many trailing events to return. Defaults to 24, max 200." },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args: unknown) => manager.tail(args as { id: string; limit?: number }),
   });
 
   tools.register({

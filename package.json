@@ -1,6 +1,6 @@
 {
   "name": "dsh-dev-sandbox",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "DSH 沙箱管理面板：创建、查看、销毁与当前工作环境完全隔离的真实 DSH 实例",
