@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import {
-  countLines,
+  listSessionFiles,
   newestSessionFile,
-  readEvents,
+  readSession,
 } from "../../shared/sessionLog.ts";
 import { portOpen } from "../../shared/process.ts";
 import type {
@@ -13,7 +13,6 @@ import type {
   TailInput,
   TailResult,
 } from "../../shared/types.ts";
-import { listSessionFiles } from "../../shared/sessionLog.ts";
 import type { ManagerContext } from "./types.ts";
 
 export async function requireRecord(ctx: ManagerContext, id: string): Promise<SandboxRecord> {
@@ -62,11 +61,12 @@ export async function readTail(ctx: ManagerContext, input: TailInput): Promise<T
   const file = newestSessionFile(record.home);
   if (!file) return { sessions: 0, events: [] };
   const limit = Math.max(1, Math.min(200, input.limit ?? 24));
+  const page = await readSession(file, limit);
   return {
     sessions: listSessionFiles(record.home).length,
     session: file.split(/[\\/]/).slice(-2)[0],
-    total: countLines(file),
-    events: readEvents(file, limit),
+    total: page.total,
+    events: page.events,
   };
 }
 

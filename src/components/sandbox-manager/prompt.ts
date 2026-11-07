@@ -1,7 +1,7 @@
 import path from "node:path";
 import { SandboxError } from "../../shared/errors.ts";
 import { runCommand, sandboxEnv } from "../../shared/process.ts";
-import { newestSessionFile, readEvents } from "../../shared/sessionLog.ts";
+import { newestSessionFile, readSession } from "../../shared/sessionLog.ts";
 import type { PromptInput, PromptResult } from "../../shared/types.ts";
 import { RUN_PROFILE } from "./config.ts";
 import { requireRecord } from "./inspect.ts";
@@ -33,7 +33,7 @@ export async function promptSandbox(ctx: ManagerContext, input: PromptInput): Pr
 
   const assistant = result.out.trim();
   const latest = newestSessionFile(record.home);
-  const events = latest ? readEvents(latest, 400) : [];
+  const events = latest ? (await readSession(latest, 400)).events : [];
   const tools = [...new Set(events.filter((event) => event.type.startsWith("tool/")).map((event) => event.type))];
 
   if (result.code !== 0 && !assistant) {

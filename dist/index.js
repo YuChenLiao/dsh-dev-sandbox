@@ -158,6 +158,7 @@ import fs3 from "node:fs";
 
 // src/shared/sessionLog.ts
 import fs from "node:fs";
+import fsp3 from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
 var SESSION_FILE = /^session(\.[\w-]+)?\.jsonl(\.zstd)?$/;
@@ -182,7 +183,11 @@ function listSessionFiles(home) {
 function textOf(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    return value.map((part) => typeof part === "object" && part && "text" in part ? String(part.text ?? "") : "").join("");
+    return value.map((part) => textOf(part?.text)).join("");
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value;
+    return textOf(record.content) || textOf(record.text);
   }
   return "";
 }
@@ -190,18 +195,104 @@ function summarize(raw) {
   if (typeof raw !== "object" || raw === null) return { type: "unknown", text: "" };
   const event = raw;
   const data = typeof event.data === "object" && event.data ? event.data : {};
-  const text = textOf(data.text) || textOf(data.content) || textOf(data.message);
-  return {
-    type: typeof event.type === "string" ? event.type : "unknown",
+  const type = typeof event.type === "string" ? event.type : "unknown";
+  const base = {
+    type,
     seq: typeof event.seq === "number" ? event.seq : void 0,
-    at: typeof event.time === "number" ? event.time : null,
-    text: text.slice(0, 240)
+    at: typeof event.time === "number" ? event.time : null
   };
+  if (type === "tool/call") {
+    const name = String(data.name ?? "tool");
+    const raw2 = data.arguments;
+    const args = (typeof raw2 === "string" ? raw2 : JSON.stringify(raw2 ?? "")).replace(/\s+/g, " ");
+    return { ...base, text: `${name}(${args.slice(0, 200)})`.slice(0, 240) };
+  }
+  if (type === "tool/result") {
+    const message = typeof data.message === "object" && data.message ? data.message : {};
+    const prefix = data.error || message.isError ? "error: " : "";
+    return { ...base, text: (prefix + textOf(message.content)).slice(0, 240) };
+  }
+  const text = textOf(data.text) || textOf(data.content) || textOf(data.message);
+  return { ...base, text: text.slice(0, 240) };
 }
-function readEvents(file, limit) {
-  const raw = fs.readFileSync(file);
-  const buffer = file.endsWith(".zstd") ? zlib.zstdDecompressSync(raw) : raw;
-  const lines = buffer.toString("utf8").split("\n").filter(Boolean);
+var ZSTD_MAGIC = 4247762216;
+var ZSTD_MAGIC_BYTES = [40, 181, 47, 253];
+function scanFrames(buffer) {
+  const frames = [];
+  let offset = 0;
+  while (offset < buffer.length) {
+    const start = offset;
+    if (buffer.length - offset < 4) break;
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) break;
+    offset += 4;
+    if (offset === buffer.length) break;
+    const descriptor = buffer.readUInt8(offset);
+    offset += 1;
+    if ((descriptor & 24) !== 0) break;
+    const contentSizeFlag = descriptor >>> 6;
+    const singleSegment = (descriptor & 32) !== 0;
+    const checksum = (descriptor & 4) !== 0;
+    const dictionaryFlag = descriptor & 3;
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
+    const contentSizeBytes = contentSizeFlag === 0 ? singleSegment ? 1 : 0 : 1 << contentSizeFlag;
+    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
+    if (buffer.length - offset < remainingHeaderBytes) break;
+    offset += remainingHeaderBytes;
+    let torn = false;
+    for (; ; ) {
+      if (buffer.length - offset < 3) {
+        torn = true;
+        break;
+      }
+      const blockHeader = buffer.readUIntLE(offset, 3);
+      offset += 3;
+      const lastBlock = (blockHeader & 1) !== 0;
+      const blockType = blockHeader >>> 1 & 3;
+      const blockSize = blockHeader >>> 3;
+      if (blockType === 3) {
+        torn = true;
+        break;
+      }
+      const payloadBytes = blockType === 1 ? 1 : blockSize;
+      if (buffer.length - offset < payloadBytes) {
+        torn = true;
+        break;
+      }
+      offset += payloadBytes;
+      if (lastBlock) break;
+    }
+    if (torn) break;
+    if (checksum) {
+      if (buffer.length - offset < 4) break;
+      offset += 4;
+    }
+    frames.push({ start, end: offset });
+  }
+  return frames;
+}
+function decodeZstdFrames(raw) {
+  const parts = [];
+  for (const frame of scanFrames(raw)) {
+    try {
+      parts.push(zlib.zstdDecompressSync(raw.subarray(frame.start, frame.end)));
+    } catch {
+    }
+  }
+  return Buffer.concat(parts);
+}
+function readContainer(raw) {
+  if (raw.length >= 4 && raw.readUInt32LE(0) === ZSTD_MAGIC) return decodeZstdFrames(raw);
+  const at = raw.indexOf(Buffer.from(ZSTD_MAGIC_BYTES));
+  if (at < 0) return raw;
+  const prefix = raw.subarray(0, at);
+  const paddingOnly = prefix.every((byte) => byte === 0 || byte === 32 || byte === 10 || byte === 13);
+  if (!paddingOnly) return raw;
+  const decoded = decodeZstdFrames(raw.subarray(at));
+  return decoded.length > 0 ? decoded : Buffer.alloc(0);
+}
+async function readSession(file, limit) {
+  const raw = await fsp3.readFile(file);
+  const lines = readContainer(raw).toString("utf8").split("\n").filter(Boolean);
   const events = [];
   for (const line of lines.slice(-limit)) {
     try {
@@ -210,12 +301,7 @@ function readEvents(file, limit) {
       events.push({ type: "unparsed", text: line.slice(0, 160) });
     }
   }
-  return events;
-}
-function countLines(file) {
-  const raw = fs.readFileSync(file);
-  const buffer = file.endsWith(".zstd") ? zlib.zstdDecompressSync(raw) : raw;
-  return buffer.toString("utf8").split("\n").filter(Boolean).length;
+  return { total: lines.length, events };
 }
 function newestSessionFile(home) {
   return listSessionFiles(home).map((file) => ({ file, at: fs.statSync(file).mtimeMs })).sort((a, b) => b.at - a.at)[0]?.file;
@@ -381,11 +467,12 @@ async function readTail(ctx, input) {
   const file = newestSessionFile(record.home);
   if (!file) return { sessions: 0, events: [] };
   const limit = Math.max(1, Math.min(200, input.limit ?? 24));
+  const page = await readSession(file, limit);
   return {
     sessions: listSessionFiles(record.home).length,
     session: file.split(/[\\/]/).slice(-2)[0],
-    total: countLines(file),
-    events: readEvents(file, limit)
+    total: page.total,
+    events: page.events
   };
 }
 async function readLog(ctx, input) {
@@ -401,7 +488,7 @@ async function readLog(ctx, input) {
 }
 
 // src/components/sandbox-manager/install.ts
-import fsp3 from "node:fs/promises";
+import fsp4 from "node:fs/promises";
 import path3 from "node:path";
 
 // src/components/sandbox-manager/config.ts
@@ -490,7 +577,7 @@ async function resolveSource(pkg) {
     path3.join(cwd, "packages", short)
   ];
   for (const dir of candidates) {
-    const text = await fsp3.readFile(path3.join(dir, "package.json"), "utf8").catch(() => void 0);
+    const text = await fsp4.readFile(path3.join(dir, "package.json"), "utf8").catch(() => void 0);
     if (!text) continue;
     try {
       if (JSON.parse(text).name === pkg) return dir;
@@ -506,15 +593,15 @@ async function installPackage(ctx, input) {
   const source = await resolveSource(name);
   const profileDir = path3.join(record.home, "profiles", record.profile);
   const link = insidePath(profileDir, path3.join(profileDir, PROFILE_NODE_MODULES, ...name.split("/")));
-  await fsp3.mkdir(path3.dirname(link), { recursive: true });
-  await fsp3.rm(link, { recursive: true, force: true });
-  await fsp3.symlink(source, link, "junction");
+  await fsp4.mkdir(path3.dirname(link), { recursive: true });
+  await fsp4.rm(link, { recursive: true, force: true });
+  await fsp4.symlink(source, link, "junction");
   const packageFile = path3.join(profileDir, "package.json");
-  const manifest = JSON.parse(await fsp3.readFile(packageFile, "utf8"));
+  const manifest = JSON.parse(await fsp4.readFile(packageFile, "utf8"));
   const bundles = manifest.dsh?.profile?.bundles ?? [];
   if (!bundles.includes(name)) bundles.push(name);
   manifest.dsh = { ...manifest.dsh ?? {}, profile: { ...manifest.dsh?.profile ?? {}, bundles } };
-  await fsp3.writeFile(packageFile, `${JSON.stringify(manifest, null, 2)}
+  await fsp4.writeFile(packageFile, `${JSON.stringify(manifest, null, 2)}
 `);
   await ctx.state.update((state) => {
     const target = state.sandboxes.find((item) => item.id === record.id);
@@ -524,7 +611,7 @@ async function installPackage(ctx, input) {
 }
 
 // src/components/sandbox-manager/lifecycle.ts
-import fsp5 from "node:fs/promises";
+import fsp6 from "node:fs/promises";
 import path5 from "node:path";
 
 // src/components/sandbox-manager/boot.ts
@@ -586,7 +673,7 @@ function tail(text) {
 }
 
 // src/components/sandbox-manager/profile.ts
-import fsp4 from "node:fs/promises";
+import fsp5 from "node:fs/promises";
 import path4 from "node:path";
 function profilePackageJson(bundles) {
   const useBundles = bundles.length ? bundles : DEFAULT_BUNDLES;
@@ -606,25 +693,25 @@ function resolveBundles(bundles) {
   return [...bundles];
 }
 async function writeProfile(paths, bundles) {
-  await fsp4.mkdir(paths.profileDir, { recursive: true });
-  await fsp4.mkdir(paths.workspace, { recursive: true });
-  await fsp4.mkdir(paths.agentsHome, { recursive: true });
-  await fsp4.writeFile(path4.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
-  await fsp4.writeFile(path4.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace));
+  await fsp5.mkdir(paths.profileDir, { recursive: true });
+  await fsp5.mkdir(paths.workspace, { recursive: true });
+  await fsp5.mkdir(paths.agentsHome, { recursive: true });
+  await fsp5.writeFile(path4.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
+  await fsp5.writeFile(path4.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace));
 }
 async function writeEnvFile(paths, apiKey) {
   if (!apiKey) return;
-  await fsp4.writeFile(path4.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
+  await fsp5.writeFile(path4.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
 `);
 }
 async function writeInheritedCredentials(paths) {
   const source = path4.join(workHome(), CREDENTIALS_FILE);
-  const text = await fsp4.readFile(source, "utf8").catch(() => void 0);
+  const text = await fsp5.readFile(source, "utf8").catch(() => void 0);
   if (!text) return "skipped";
   const filtered = stripCredentialRecord(text, BROWSER_SESSION_RECORD);
   if (filtered.includes(BROWSER_SESSION_RECORD)) return "skipped";
   if (!filtered.includes("records:") || !filtered.includes(PLATFORM_ACCOUNT_PREFIX)) return "skipped";
-  await fsp4.writeFile(path4.join(paths.home, CREDENTIALS_FILE), filtered);
+  await fsp5.writeFile(path4.join(paths.home, CREDENTIALS_FILE), filtered);
   return "inherited";
 }
 function stripCredentialRecord(text, key) {
@@ -644,23 +731,23 @@ function stripCredentialRecord(text, key) {
 }
 async function writeCredentialEnv(paths) {
   const envFile = path4.join(paths.home, ENV_FILE);
-  const exists = await fsp4.access(envFile).then(() => true).catch(() => false);
+  const exists = await fsp5.access(envFile).then(() => true).catch(() => false);
   if (exists) return;
-  const text = await fsp4.readFile(path4.join(paths.home, CREDENTIALS_FILE), "utf8").catch(() => void 0);
+  const text = await fsp5.readFile(path4.join(paths.home, CREDENTIALS_FILE), "utf8").catch(() => void 0);
   if (!text) return;
   const key = /DEEPSEEK_API_KEY:\s*["']?([^"'\s]+)["']?/.exec(text)?.[1];
   if (!key) return;
-  await fsp4.writeFile(envFile, `${API_KEY_ENV}=${key}
+  await fsp5.writeFile(envFile, `${API_KEY_ENV}=${key}
 `);
 }
 async function ensureModuleResolution(paths) {
   const link = path4.join(paths.home, "profiles", PROFILE_NODE_MODULES);
   const shared = path4.join(workHome(), "profiles", PROFILE_NODE_MODULES);
-  const linked = await fsp4.access(link).then(() => true).catch(() => false);
+  const linked = await fsp5.access(link).then(() => true).catch(() => false);
   if (linked) return;
-  const available = await fsp4.access(shared).then(() => true).catch(() => false);
+  const available = await fsp5.access(shared).then(() => true).catch(() => false);
   if (!available) return;
-  await fsp4.symlink(shared, link, "junction").catch(() => void 0);
+  await fsp5.symlink(shared, link, "junction").catch(() => void 0);
 }
 
 // src/components/sandbox-manager/lifecycle.ts
@@ -691,7 +778,7 @@ async function createSandbox(ctx, input) {
     if (credentials === "inherited") await writeCredentialEnv(paths);
     await ensureModuleResolution(paths);
     const booted = await boot(paths, env);
-    await fsp5.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}
+    await fsp6.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}
 `).catch((error) => console.error("[sandbox] \u5199 credentials \u89C2\u6D4B\u884C\u5931\u8D25", error));
     const record = {
       id,
@@ -712,9 +799,9 @@ async function createSandbox(ctx, input) {
     });
     return record;
   } catch (error) {
-    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
+    const log = await fsp6.readFile(paths.logFile, "utf8").catch(() => "");
     await sleep(600);
-    await fsp5.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
+    await fsp6.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
     if (!log.trim()) throw error;
     throw new SandboxError(`${asMessage(error)}
 --- boot.log ---
@@ -769,7 +856,7 @@ async function startSandbox(ctx, input) {
     }
     return { started: record.id, port: booted.port, token: booted.token, pid, ready: booted.ready };
   } catch (error) {
-    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
+    const log = await fsp6.readFile(paths.logFile, "utf8").catch(() => "");
     throw new SandboxError(
       `${asMessage(error)}
 --- boot.log ---
@@ -788,10 +875,10 @@ async function destroySandbox(ctx, input) {
   while (Date.now() < deadline && await portOpen(record.port)) await sleep(250);
   const trash = insidePath(ctx.root, path5.join(ctx.root, `${TRASH_PREFIX}${path5.basename(record.home)}-${Date.now()}`));
   const instanceDir = path5.dirname(record.home);
-  const exists = await fsp5.access(instanceDir).then(() => true).catch(() => false);
+  const exists = await fsp6.access(instanceDir).then(() => true).catch(() => false);
   if (exists) {
-    await fsp5.rename(instanceDir, trash).catch(() => void 0);
-    await fsp5.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
+    await fsp6.rename(instanceDir, trash).catch(() => void 0);
+    await fsp6.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
   }
   await ctx.state.update((next) => {
     next.sandboxes = next.sandboxes.filter((item) => item.id !== record.id);
@@ -803,24 +890,24 @@ async function destroySandbox(ctx, input) {
 import path7 from "node:path";
 
 // src/components/sandbox-manager/runProfile.ts
-import fsp6 from "node:fs/promises";
+import fsp7 from "node:fs/promises";
 import path6 from "node:path";
 async function ensureRunProfile(paths, bundles) {
   const dir = path6.join(paths.home, "profiles", RUN_PROFILE);
-  await fsp6.mkdir(dir, { recursive: true });
+  await fsp7.mkdir(dir, { recursive: true });
   const plugins = bundles.filter((item) => item !== WEB_APP_BUNDLE);
   const list = [.../* @__PURE__ */ new Set(["@deepseek-ai/dsh-base", HEADLESS_BUNDLE, ...plugins])];
-  await fsp6.writeFile(
+  await fsp7.writeFile(
     path6.join(dir, "package.json"),
     `${JSON.stringify({ name: `dsh-profile-${RUN_PROFILE}`, private: true, dsh: { profile: { bundles: list } } }, null, 2)}
 `
   );
-  await fsp6.writeFile(path6.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace));
+  await fsp7.writeFile(path6.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace));
   const link = path6.join(dir, "node_modules");
   const shared = path6.join(paths.home, "profiles", SANDBOX_PROFILE, "node_modules");
-  const linked = await fsp6.access(link).then(() => true).catch(() => false);
-  const available = await fsp6.access(shared).then(() => true).catch(() => false);
-  if (!linked && available) await fsp6.symlink(shared, link, "junction").catch(() => void 0);
+  const linked = await fsp7.access(link).then(() => true).catch(() => false);
+  const available = await fsp7.access(shared).then(() => true).catch(() => false);
+  if (!linked && available) await fsp7.symlink(shared, link, "junction").catch(() => void 0);
 }
 
 // src/components/sandbox-manager/prompt.ts
@@ -838,7 +925,7 @@ async function promptSandbox(ctx, input) {
   );
   const assistant = result.out.trim();
   const latest = newestSessionFile(record.home);
-  const events = latest ? readEvents(latest, 400) : [];
+  const events = latest ? (await readSession(latest, 400)).events : [];
   const tools = [...new Set(events.filter((event) => event.type.startsWith("tool/")).map((event) => event.type))];
   if (result.code !== 0 && !assistant) {
     const detail = (result.err || "").trim().split("\n").slice(-3).join(" | ");
@@ -854,7 +941,7 @@ async function promptSandbox(ctx, input) {
 }
 
 // src/components/sandbox-manager/status.ts
-import fsp7 from "node:fs/promises";
+import fsp8 from "node:fs/promises";
 import path8 from "node:path";
 var ERROR_LINE = /error|failed|cannot resolve|EADDRINUSE/i;
 async function clientEntries(port) {
@@ -889,11 +976,11 @@ async function readStatus(ctx, id) {
   const listening = up ? await portOpen(record.port) : false;
   let log = "";
   try {
-    log = await fsp7.readFile(record.logFile, "utf8");
+    log = await fsp8.readFile(record.logFile, "utf8");
   } catch {
     log = "";
   }
-  const patch = await fsp7.readFile(path8.join(record.home, "profiles", record.profile, "cordis.patch.yml"), "utf8").catch(() => "");
+  const patch = await fsp8.readFile(path8.join(record.home, "profiles", record.profile, "cordis.patch.yml"), "utf8").catch(() => "");
   const policy = /mode:\s*(\S+)/.exec(patch)?.[1] ?? "unknown";
   const errors = log.split("\n").filter((line) => ERROR_LINE.test(line)).slice(-5).map((line) => line.trim().slice(0, 240));
   return {
@@ -917,14 +1004,14 @@ async function reconfigureSandbox(ctx, input) {
   const profileDir = path9.join(record.home, "profiles", record.profile);
   const packageFile = path9.join(profileDir, "package.json");
   const bundles = input.bundles && input.bundles.length ? resolveBundles(input.bundles) : record.bundles;
-  await import("node:fs/promises").then((fsp8) => fsp8.writeFile(packageFile, profilePackageJson(bundles)));
+  await import("node:fs/promises").then((fsp9) => fsp9.writeFile(packageFile, profilePackageJson(bundles)));
   const check = await runCommand([...DUMP_CONFIG_ARGS], {
     cwd: record.workspace,
     env: sandboxEnv(record.home, path9.join(path9.dirname(record.home), "agents")),
     stdio: ["ignore", "pipe", "pipe"]
   }, COMMAND_TIMEOUT_MS);
   if (check.code !== 0) {
-    await import("node:fs/promises").then((fsp8) => fsp8.writeFile(packageFile, profilePackageJson(record.bundles)));
+    await import("node:fs/promises").then((fsp9) => fsp9.writeFile(packageFile, profilePackageJson(record.bundles)));
     const detail = (check.err || check.out).trim().split("\n").slice(-4).join(" | ");
     return { ok: false, stage: "dump-config", detail };
   }
