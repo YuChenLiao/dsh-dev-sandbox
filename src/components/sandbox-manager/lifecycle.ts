@@ -100,7 +100,7 @@ export async function stopSandbox(ctx: ManagerContext, input: LifecycleInput): P
   if (!portClosed) {
     throw new SandboxError(
       `进程没有结束：端口 ${record.port} 仍被占用，已保留 pid ${record.pid} 以便重试。`
-      + `再 stop 一次；或用 taskkill /PID ${record.pid} /T /F 手动结束；或直接 destroy 丢弃这个实例。`,
+      + `再 stop 一次；或用 taskkill（Windows）/PID ${record.pid} /T /F 手动结束；或直接 destroy 丢弃这个实例。`,
       "stop-incomplete",
     );
   }

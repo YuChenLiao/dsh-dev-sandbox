@@ -230,7 +230,8 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function killTree(pid) {
   if (!pid) return;
   try {
-    spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    const child = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    child.on("error", () => void 0);
   } catch {
   }
 }
@@ -731,7 +732,7 @@ async function stopSandbox(ctx, input) {
   const portClosed = !await portOpen(record.port);
   if (!portClosed) {
     throw new SandboxError(
-      `\u8FDB\u7A0B\u6CA1\u6709\u7ED3\u675F\uFF1A\u7AEF\u53E3 ${record.port} \u4ECD\u88AB\u5360\u7528\uFF0C\u5DF2\u4FDD\u7559 pid ${record.pid} \u4EE5\u4FBF\u91CD\u8BD5\u3002\u518D stop \u4E00\u6B21\uFF1B\u6216\u7528 taskkill /PID ${record.pid} /T /F \u624B\u52A8\u7ED3\u675F\uFF1B\u6216\u76F4\u63A5 destroy \u4E22\u5F03\u8FD9\u4E2A\u5B9E\u4F8B\u3002`,
+      `\u8FDB\u7A0B\u6CA1\u6709\u7ED3\u675F\uFF1A\u7AEF\u53E3 ${record.port} \u4ECD\u88AB\u5360\u7528\uFF0C\u5DF2\u4FDD\u7559 pid ${record.pid} \u4EE5\u4FBF\u91CD\u8BD5\u3002\u518D stop \u4E00\u6B21\uFF1B\u6216\u7528 taskkill\uFF08Windows\uFF09/PID ${record.pid} /T /F \u624B\u52A8\u7ED3\u675F\uFF1B\u6216\u76F4\u63A5 destroy \u4E22\u5F03\u8FD9\u4E2A\u5B9E\u4F8B\u3002`,
       "stop-incomplete"
     );
   }

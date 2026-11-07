@@ -11,7 +11,10 @@ export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 export function killTree(pid: number | undefined): void {
   if (!pid) return;
   try {
-    spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    const child = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    // 不监听 error 的话，spawn 一个不存在的可执行文件会以未捕获的 error 事件把宿主一起带崩；
+    // 这里只要降级成「杀不掉」，调用方读端口/pid 会发现并报错。
+    child.on("error", () => undefined);
   } catch {
     // 进程已经没了
   }
