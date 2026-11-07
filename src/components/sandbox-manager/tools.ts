@@ -1,0 +1,111 @@
+import type { SandboxManager } from "./manager.ts";
+import type { HostContext } from "./types.ts";
+
+const TEXT_OUTPUT = {
+  schema: { type: "object" as const },
+  render: (_args: unknown, value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+};
+
+interface ToolsLike {
+  register(definition: Record<string, unknown>, options?: Record<string, unknown>): () => void;
+}
+
+/**
+ * 五个工具：入参只有标识与文本，没有路径、没有命令。
+ * 会话工作区、沙箱 policy、凭据位置都由 manager 内部决定，模型无从指定。
+ */
+export function registerSandboxTools(ctx: HostContext, manager: SandboxManager): void {
+  const tools = ctx.get("tools") as ToolsLike | undefined;
+  if (!tools) return;
+
+  tools.register({
+    name: "sandbox_create",
+    description:
+      "Create an isolated DSH sandbox: its own home, profile, port and sessions, with the work profile untouched. "
+      + "Use it to try a plugin before installing it into the real profile.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Display name; defaults to the generated id." },
+        bundles: { type: "array", items: { type: "string" }, description: "Extra bundles to load on boot." },
+      },
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 120_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.create(args as { name?: string; bundles?: string[] }),
+  });
+
+  tools.register({
+    name: "sandbox_install",
+    description:
+      "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. "
+      + "The work profile and its node_modules are not touched. A running instance does not hot-load it: "
+      + "recreate the instance to load the plugin.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        package: { type: "string", description: "Exact package name, e.g. dsh-dev-sandbox." },
+      },
+      required: ["id", "package"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.install(args as { id: string; package: string }),
+  });
+
+  tools.register({
+    name: "sandbox_prompt",
+    description:
+      "Run one real conversation turn inside a sandbox and return the assistant text plus the tool names it called. "
+      + "This is how a dialogue-facing plugin gets verified. The turn runs on the sandbox's inherited model credentials, "
+      + "so each call costs one real request.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        text: { type: "string", description: "Message to send." },
+        timeoutMs: { type: "number", description: "How long to wait for the turn to settle." },
+      },
+      required: ["id", "text"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 300_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.prompt(args as { id: string; text: string; timeoutMs?: number }),
+  });
+
+  tools.register({
+    name: "sandbox_status",
+    description:
+      "Report one sandbox: process, port, session count, loaded bundles, the client bundle ids in its boot graph, "
+      + "and the error lines from its startup log.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args: unknown) => manager.status((args as { id: string }).id),
+  });
+
+  tools.register({
+    name: "sandbox_destroy",
+    description: "Destroy a sandbox: kill its process tree, wait for the port to close, delete its home directory.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.destroy(args as { id: string }),
+  });
+}

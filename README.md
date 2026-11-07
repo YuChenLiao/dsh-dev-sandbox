@@ -80,6 +80,24 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.sect
 
 `/config` 已实现但没有面板入口，改 bundles 目前走接口或直接编辑沙箱 profile。
 
+## 给模型的工具
+
+装上之后，工作会话里的模型可以直接操作沙箱，不必你手动点面板：
+
+| 工具 | 作用 |
+| --- | --- |
+| `sandbox_create` | 建实例，返回端口、token 与就绪状态 |
+| `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
+| `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名 |
+| `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
+| `sandbox_destroy` | 销毁 |
+
+入参只有实例 id 与包名或文本，没有路径、没有命令、没有环境变量。会话工作区、沙箱 policy、凭据位置都由插件内部决定，模型无从指定。
+
+`sandbox_prompt` 走的是 headless profile（base + headless + 待测插件），不是 web 实例的 session API：旧版 dsh 的 `session/prompt` 只把消息入队、不驱动 turn，headless 才能稳定跑完一轮并把答案打到 stdout。因此它验证的是 **agent 侧行为**（工具、hook、persona），界面部分仍要在面板或沙箱页面里看。
+
+每次 `sandbox_prompt` 花的是继承来的那份额度，一轮就是一次真实调用。
+
 ## 配置
 
 两个环境变量，都要在启动 `dsh` 之前设进去：

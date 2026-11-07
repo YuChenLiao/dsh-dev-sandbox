@@ -3,7 +3,8 @@ import path from "node:path";
 import zlib from "node:zlib";
 import type { SessionEventView } from "./types.ts";
 
-const SESSION_FILE = /^session\.v\d+\.jsonl(\.zstd)?$/;
+// 版本后缀可有可无：0.2.x 落 session.v4.jsonl.zstd，较旧的实例落 session.jsonl.zstd。
+const SESSION_FILE = /^session(\.[\w-]+)?\.jsonl(\.zstd)?$/;
 
 /** 会话按 cwd 分桶存放：sessions/<escaped-cwd>/<session-id>/session.v*.jsonl.zstd */
 export function listSessionFiles(home: string): string[] {

@@ -1,6 +1,6 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_BUNDLES, SANDBOX_PROFILE } from "../../shared/config.ts";
+import { DEFAULT_BUNDLES, PACKAGE_NAME, SANDBOX_PROFILE } from "../../shared/config.ts";
 import { workHome } from "../../shared/paths.ts";
 import {
   API_KEY_ENV,
@@ -10,7 +10,7 @@ import {
   PLATFORM_ACCOUNT_PREFIX,
   PROFILE_NODE_MODULES,
   PROFILE_PACKAGE_NAME,
-  PROFILE_PATCH_BODY,
+  profilePatchBody,
 } from "./config.ts";
 import type { SandboxPaths } from "./types.ts";
 
@@ -24,19 +24,19 @@ export function profilePackageJson(bundles: readonly string[]): string {
   }, null, 2)}\n`;
 }
 
+/** bundles 只接受合法包名：这个列表会写进 profile，路径式字符串不该进来。 */
 export function resolveBundles(bundles: readonly string[] | undefined): string[] {
-  return bundles && bundles.length ? [...bundles] : [...DEFAULT_BUNDLES];
+  const valid = (bundles ?? []).filter((item) => PACKAGE_NAME.test(item));
+  return valid.length ? valid : [...DEFAULT_BUNDLES];
 }
 
-/** 建目录 + 写 profile 的两份文件；profile 层永远是空补丁。 */
+/** 建目录 + 写 profile 的两份文件；补丁层总是重写，把 policy 钉在 workspace。 */
 export async function writeProfile(paths: SandboxPaths, bundles: readonly string[]): Promise<void> {
   await fsp.mkdir(paths.profileDir, { recursive: true });
   await fsp.mkdir(paths.workspace, { recursive: true });
   await fsp.mkdir(paths.agentsHome, { recursive: true });
   await fsp.writeFile(path.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
-  const patch = path.join(paths.profileDir, "cordis.patch.yml");
-  const exists = await fsp.access(patch).then(() => true).catch(() => false);
-  if (!exists) await fsp.writeFile(patch, PROFILE_PATCH_BODY);
+  await fsp.writeFile(path.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace));
 }
 
 /** 显式传入的 key 走沙箱自己的 .env；工作环境凭据的继承见 writeInheritedCredentials。 */
@@ -85,6 +85,19 @@ function stripCredentialRecord(text: string, key: string): string {
     if (!skipping) out.push(line);
   }
   return out.join("\n");
+}
+
+/** headless 的 API-key 路由读 .env；key 从继承来的 refs 里取，避免每次手工提供。 */
+export async function writeCredentialEnv(paths: SandboxPaths): Promise<void> {
+  // 显式给过 key 就不覆盖：create 里 writeEnvFile 写的那份优先。
+  const envFile = path.join(paths.home, ENV_FILE);
+  const exists = await fsp.access(envFile).then(() => true).catch(() => false);
+  if (exists) return;
+  const text = await fsp.readFile(path.join(paths.home, CREDENTIALS_FILE), "utf8").catch(() => undefined);
+  if (!text) return;
+  const key = /DEEPSEEK_API_KEY:\s*["']?([^"'\s]+)["']?/.exec(text)?.[1];
+  if (!key) return;
+  await fsp.writeFile(envFile, `${API_KEY_ENV}=${key}\n`);
 }
 
 /**

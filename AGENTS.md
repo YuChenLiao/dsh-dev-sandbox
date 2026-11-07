@@ -37,17 +37,22 @@ dsh-dev-sandbox/
     │   └── api.ts        # 面板侧的 /__sbx 客户端
     └── components/
         ├── sandbox-manager/      # host 可注册组件
-        │   ├── config.ts         # 实例目录名、profile 包名、启动参数
+        │   ├── config.ts         # 实例目录名、profile 包名、启动参数、两套补丁
         │   ├── types.ts          # ManagerContext / HostContext / WebServerLike
         │   ├── profile.ts        # profile 清单、.env、凭据继承、官方包解析
         │   ├── boot.ts           # 起进程、解析地址、等就绪、失败自杀
         │   ├── lifecycle.ts      # create / destroy
+        │   ├── install.ts        # 把工作区插件 junction 进沙箱 profile
+        │   ├── runProfile.ts     # headless 运行 profile：base + headless + 待测插件
+        │   ├── prompt.ts         # 在沙箱里真跑一轮对话
+        │   ├── status.ts         # 进程 / 会话 / 客户端图 / 日志错误
         │   ├── inspect.ts        # list / tail / log
         │   ├── reconfigure.ts    # dump-config 预检与回滚
         │   ├── assets.ts         # 读取构建产物 panel.css
-        │   ├── routes.ts         # 路由表与入参校验
+        │   ├── routes.ts         # HTTP 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
-        │   └── register.ts       # 注册 /__sbx
+        │   ├── tools.ts          # 交给模型的五个工具
+        │   └── register.ts       # 注册工具与 /__sbx
         └── sandbox-panel/        # client 可注册组件
             ├── config.ts         # 槽位、组件排序、轮询间隔、全部中文文案 TEXTS
             ├── types.ts          # 面板本地类型
@@ -73,6 +78,8 @@ dsh-dev-sandbox/
 | 面板在设置页的位置 | `src/components/sandbox-panel/config.ts` 的 `PANEL_ORDER` |
 | 新增一个 JSON 接口 | `sandbox-manager/routes.ts` 的 dispatch 表加分支 |
 | 新增一个静态资源路由 | `sandbox-manager/register.ts` 的 prefix handler 加分支，路径常量放 `shared/routes.ts` |
+| 新增或修改给模型的工具 | `sandbox-manager/tools.ts`，逻辑落在对应组件文件 |
+| 沙箱里怎么跑对话 | `sandbox-manager/prompt.ts` 与 `runProfile.ts`（headless 路线） |
 | 创建、销毁的流程 | `src/components/sandbox-manager/lifecycle.ts` |
 | 启动参数、端口策略 | `src/components/sandbox-manager/config.ts` 的 `BOOT_ARGS` |
 | profile 里放什么、凭据怎么继承 | `src/components/sandbox-manager/profile.ts` |

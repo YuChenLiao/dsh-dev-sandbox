@@ -1,6 +1,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { PORT_RELEASE_TIMEOUT_MS, SANDBOX_PROFILE, TRASH_PREFIX } from "../../shared/config.ts";
+import { asMessage, SandboxError } from "../../shared/errors.ts";
 import { insidePath } from "../../shared/paths.ts";
 import { killTree, portOpen, sandboxEnv, sleep } from "../../shared/process.ts";import type { CreateSandboxInput, DestroyInput, DestroyResult, SandboxRecord } from "../../shared/types.ts";
 import { boot } from "./boot.ts";
@@ -13,7 +14,7 @@ import {
   PROFILE_DIR,
   WORKSPACE_DIR,
 } from "./config.ts";
-import { ensureModuleResolution, resolveBundles, writeEnvFile, writeInheritedCredentials, writeProfile } from "./profile.ts";
+import { ensureModuleResolution, resolveBundles, writeCredentialEnv, writeEnvFile, writeInheritedCredentials, writeProfile } from "./profile.ts";
 import type { ManagerContext, SandboxPaths } from "./types.ts";
 
 export function newInstanceId(): string {
@@ -44,6 +45,7 @@ export async function createSandbox(ctx: ManagerContext, input: CreateSandboxInp
     await writeProfile(paths, bundles);
     await writeEnvFile(paths, input.apiKey);
     const credentials = await writeInheritedCredentials(paths);
+    if (credentials === "inherited") await writeCredentialEnv(paths);
     await ensureModuleResolution(paths);
 
     const booted = await boot(paths, env);
@@ -69,10 +71,12 @@ export async function createSandbox(ctx: ManagerContext, input: CreateSandboxInp
     });
     return record;
   } catch (error) {
-    // boot 已结束自己的进程树，这里只收目录
+    // boot 已结束自己的进程树，这里收目录；失败现场并入错误信息，否则排障只能靠猜。
+    const log = await fsp.readFile(paths.logFile, "utf8").catch(() => "");
     await sleep(600);
     await fsp.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => undefined);
-    throw error;
+    if (!log.trim()) throw error;
+    throw new SandboxError(`${asMessage(error)}\n--- boot.log ---\n${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed");
   }
 }
 

@@ -95,3 +95,45 @@ export interface ReconfigureResult {
   restarted?: string;
   port?: number;
 }
+
+/** 把工作区里的插件装进沙箱：junction + bundles 行，不改工作环境。 */
+export interface InstallInput {
+  id: string;
+  package: string;
+}
+
+export interface InstallResult {
+  package: string;
+  source: string;
+  bundles: string[];
+  requiresReload: true;
+}
+
+/** 在沙箱里真实跑一轮对话，用来验证对话类插件。 */
+export interface PromptInput {
+  id: string;
+  text: string;
+  timeoutMs?: number;
+}
+
+export interface PromptResult {
+  session: string;
+  assistant: string;
+  tools: string[];
+  reason: "idle" | "timeout";
+  events: number;
+}
+
+/** 一次看全：进程、会话、插件行、客户端图、日志里的错误。 */
+export interface StatusResult {
+  id: string;
+  alive: boolean;
+  listening: boolean;
+  port: number;
+  pid: number;
+  bundles: string[];
+  sessions: number;
+  policy: string;
+  clientEntries: string[];
+  errors: string[];
+}

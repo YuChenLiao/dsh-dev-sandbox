@@ -32,3 +32,6 @@ export const LISTEN_URL_PATTERN = /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([\w-]+)
 
 /** 启动失败的早期特征，命中就不必等满超时。 */
 export const BOOT_FAILURE_PATTERN = /failed to load|cannot resolve profile bundle|ERR_UNSUPPORTED/;
+
+/** 合法的 npm 包名：工具层与 profile 写入共用一个判据，避免包名被当成路径。 */
+export const PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;

@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import { KEEP_ENV, PROBE_TIMEOUT_MS } from "./config.ts";
+import { SandboxError } from "./errors.ts";
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -41,23 +44,49 @@ export function sandboxEnv(home: string, agentsHome: string): NodeJS.ProcessEnv 
   return out;
 }
 
+/**
+ * 解析 dsh 的 bin.js。找不到就报错，绝不再退回 cmd.exe —— 参数里有模型给的文本，
+ * 过 shell 会把 & | > 之类的字符当命令解释。
+ */
+export function dshBinPath(): string {
+  const explicit = process.env.DSH_SANDBOX_DSH_BIN;
+  if (explicit) return explicit;
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new SandboxError("找不到 dsh 的 bin.js，请设置 DSH_SANDBOX_DSH_BIN 指向 @deepseek-ai/dsh/lib/bin.js", "dsh-bin-missing");
+}
+
 export interface SpawnOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdio?: ["ignore", "pipe", "pipe"] | "inherit";
 }
 
-/** 启动 dsh：优先用显式指定的 bin.js，否则走 PATH 上的 dsh 命令。 */
-export function spawnDsh(args: string[], options: SpawnOptions): ChildProcess {
-  const bin = process.env.DSH_SANDBOX_DSH_BIN;
-  const stdio = options.stdio ?? ["ignore", "pipe", "pipe"];
-  if (bin) {
-    // 桌面宿主是 Electron 二进制，用它跑 bin.js 必须先进 node 模式。
-    const env = { ...options.env, ELECTRON_RUN_AS_NODE: "1" };
-    return spawn(process.execPath, [bin, ...args], { ...options, env, stdio, windowsHide: true });
+/**
+ * 选一个真正的 node 来跑 bin.js。桌面宿主的 process.execPath 是 Electron 二进制，
+ * 虽然 ELECTRON_RUN_AS_NODE 能跑，但它内置的 node 版本与 CLI 安装不一定对得上，
+ * 实测会在启动早期崩掉；PATH 上装了 node 就优先用它。
+ */
+function nodeExecutable(): string {
+  const names = process.platform === "win32" ? ["node.exe", "node.cmd"] : ["node"];
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
-  const comspec = process.env.ComSpec ?? "cmd.exe";
-  return spawn(comspec, ["/d", "/s", "/c", `dsh ${args.join(" ")}`], { ...options, stdio, windowsHide: true });
+  return process.execPath;
+}
+
+/** 启动 dsh：永远用 node 直接执行 bin.js，参数作为 argv 传递，不经过任何 shell。 */
+export function spawnDsh(args: string[], options: SpawnOptions): ChildProcess {
+  const stdio = options.stdio ?? ["ignore", "pipe", "pipe"];
+  const env = { ...options.env, ELECTRON_RUN_AS_NODE: "1" };
+  return spawn(nodeExecutable(), [dshBinPath(), ...args], { ...options, env, stdio, windowsHide: true });
 }
 
 export interface CommandResult {
@@ -68,8 +97,14 @@ export interface CommandResult {
 
 /** 跑一次短命令并收集输出，超时就杀树。 */
 export function runCommand(args: string[], options: SpawnOptions, timeoutMs: number): Promise<CommandResult> {
-  return new Promise((done) => {
-    const child = spawnDsh(args, options);
+  return new Promise((done, fail) => {
+    let child: ChildProcess;
+    try {
+      child = spawnDsh(args, options);
+    } catch (error) {
+      fail(error);
+      return;
+    }
     let out = "";
     let err = "";
     child.stdout?.on("data", (d) => { out += String(d); });
@@ -78,6 +113,7 @@ export function runCommand(args: string[], options: SpawnOptions, timeoutMs: num
       killTree(child.pid);
       done({ code: null, out, err });
     }, timeoutMs);
+    child.on("error", (error) => { clearTimeout(timer); fail(error); });
     child.on("close", (code) => { clearTimeout(timer); done({ code, out, err }); });
   });
 }

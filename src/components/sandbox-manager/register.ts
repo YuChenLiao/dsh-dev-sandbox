@@ -5,12 +5,15 @@ import type { HostContext, WebServerLike } from "./types.ts";
 import { readStylesheet } from "./assets.ts";
 import { createManager } from "./manager.ts";
 import { dispatch } from "./routes.ts";
+import { registerSandboxTools } from "./tools.ts";
 
-/** 把控制面挂成宿主的一条 prefix 路由；没有 webServer（例如纯 headless）时安静退出。 */
+/** 注册工具与 /__sbx 路由；没有 webServer（例如纯 headless）时只留工具。 */
 export function registerSandboxManager(ctx: HostContext): void {
+  const manager = createManager();
+  registerSandboxTools(ctx, manager);
+
   const web = ctx.get("webServer") as WebServerLike | undefined;
   if (!web) return;
-  const manager = createManager();
 
   const handler = async (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
