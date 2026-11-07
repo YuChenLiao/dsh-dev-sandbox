@@ -92,41 +92,18 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.sect
 
 ## 目录结构
 
+`src/` 分三层：`entries/` 只做装配，`shared/` 放跨组件逻辑，`components/` 下每个可注册组件一个目录，组件内再按 `config`、`types`、逻辑、`parts` 拆开。
+
 ```text
 src/
-  shared/                     跨组件公共层
-    config.ts                 默认 bundles、环境白名单、超时、正则
-    types.ts                  账本记录与结果形状
-    errors.ts                 SandboxError
-    paths.ts                  根目录解析与越界校验
-    process.ts                进程树终止、端口探测、环境白名单、spawn
-    state.ts                  账本读写（串行队列）
-    sessionLog.ts             会话文件枚举、zstd 解压、事件摘要
-    http.ts                   宿主侧 JSON 响应与请求体读取
-    api.ts                    面板侧 HTTP 客户端
+  entries/              host.ts / client.ts，只装配
+  shared/               配置、类型、错误、路径、进程、账本、会话日志、HTTP、面板客户端
   components/
-    sandbox-manager/          host 可注册组件
-      config.ts               实例目录名、profile 名、启动参数
-      types.ts                上下文类型
-      profile.ts              profile 清单、.env、模块解析
-      boot.ts                 起进程、解析地址、等就绪
-      lifecycle.ts            create / destroy
-      inspect.ts              list / tail / log
-      reconfigure.ts          dump-config 预检与回滚
-      routes.ts               路由表与入参校验
-      manager.ts              组装
-      register.ts             注册 /__sbx
-    sandbox-panel/            client 可注册组件
-      config.ts               槽位、轮询间隔、文案
-      api.ts / hooks.ts       动作绑定与数据源
-      styles.ts               样式
-      panel.ts                组合与动作编排
-      parts/                  表单、行、事件列表
-      register.ts             注册 settings.section
-  entries/
-    host.ts                   export apply
-    client.ts                 export { inject, apply }
+    sandbox-manager/    host 可注册组件：控制面与 /__sbx 路由
+    sandbox-panel/      client 可注册组件：设置页面板
 ```
+
+完整文件树、每个文件的职责、以及「改某类需求该动哪个文件」的索引见 [AGENTS.md](AGENTS.md)。
 
 ## 开发
 
