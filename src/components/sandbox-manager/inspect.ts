@@ -23,7 +23,9 @@ export async function requireRecord(ctx: ManagerContext, id: string): Promise<Sa
   return record;
 }
 
-function alive(pid: number): boolean {
+/** pid 为 0 表示人工停过：`process.kill(0, 0)` 探的是进程组，会误判成存活。 */
+export function alive(pid: number): boolean {
+  if (!pid) return false;
   try {
     process.kill(pid, 0);
     return true;

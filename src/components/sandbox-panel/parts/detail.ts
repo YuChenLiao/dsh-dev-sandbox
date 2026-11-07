@@ -9,6 +9,8 @@ export interface SandboxDetailProps {
   busy: boolean;
   onBack: () => void;
   onOpen: () => void;
+  onStop: () => void;
+  onStart: () => void;
   onDestroy: () => void;
 }
 
@@ -72,6 +74,9 @@ export function SandboxDetail(props: SandboxDetailProps) {
         h("div", { className: "sbx-title" }, sandbox.name),
         h("div", { className: "sbx-sub" }, sandbox.id)),
       h("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
+      live
+        ? h("button", { className: "sbx-btn", type: "button", disabled: props.busy, onClick: props.onStop }, TEXTS.stop)
+        : h("button", { className: "sbx-btn sbx-btn-primary", type: "button", disabled: props.busy, onClick: props.onStart }, TEXTS.start),
       h("button", { className: "sbx-btn", type: "button", disabled: props.busy, onClick: () => void load() },
         TEXTS.refresh),
       h("button", { className: "sbx-btn sbx-btn-danger", type: "button", disabled: props.busy, onClick: props.onDestroy },

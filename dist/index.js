@@ -98,11 +98,8 @@ function stripRoutePrefix(pathname) {
 // src/components/sandbox-manager/assets.ts
 import fsp from "node:fs/promises";
 var STYLESHEET_URL = new URL("./panel.css", import.meta.url);
-var cached;
-async function readStylesheet() {
-  if (cached !== void 0) return cached;
-  cached = await fsp.readFile(STYLESHEET_URL, "utf8");
-  return cached;
+function readStylesheet() {
+  return fsp.readFile(STYLESHEET_URL, "utf8");
 }
 
 // src/shared/paths.ts
@@ -350,6 +347,7 @@ async function requireRecord(ctx, id) {
   return record;
 }
 function alive(pid) {
+  if (!pid) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -722,6 +720,64 @@ async function createSandbox(ctx, input) {
 ${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed", true);
   }
 }
+async function stopSandbox(ctx, input) {
+  const record = await requireRecord(ctx, input.id);
+  if (!record.pid) {
+    return { stopped: record.id, portClosed: !await portOpen(record.port) };
+  }
+  killTree(record.pid);
+  const deadline = Date.now() + PORT_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline && await portOpen(record.port)) await sleep(250);
+  const portClosed = !await portOpen(record.port);
+  if (!portClosed) {
+    throw new SandboxError(
+      `\u8FDB\u7A0B\u6CA1\u6709\u7ED3\u675F\uFF1A\u7AEF\u53E3 ${record.port} \u4ECD\u88AB\u5360\u7528\uFF0C\u5DF2\u4FDD\u7559 pid ${record.pid} \u4EE5\u4FBF\u91CD\u8BD5\u3002\u518D stop \u4E00\u6B21\uFF1B\u6216\u7528 taskkill /PID ${record.pid} /T /F \u624B\u52A8\u7ED3\u675F\uFF1B\u6216\u76F4\u63A5 destroy \u4E22\u5F03\u8FD9\u4E2A\u5B9E\u4F8B\u3002`,
+      "stop-incomplete"
+    );
+  }
+  await ctx.state.update((next) => {
+    const target = next.sandboxes.find((item) => item.id === record.id);
+    if (!target) return;
+    target.pid = 0;
+    target.ready = false;
+  });
+  return { stopped: record.id, portClosed };
+}
+async function startSandbox(ctx, input) {
+  const record = await requireRecord(ctx, input.id);
+  if (record.pid && (alive(record.pid) || await portOpen(record.port))) {
+    throw new SandboxError("\u5B9E\u4F8B\u5DF2\u5728\u8FD0\u884C\uFF1B\u8981\u91CD\u542F\u8BF7\u5148 stop", "already-running");
+  }
+  const paths = instancePaths(ctx.root, record.id);
+  const env = sandboxEnv(paths.home, paths.agentsHome);
+  try {
+    const booted = await boot(paths, env);
+    const pid = booted.child.pid ?? 0;
+    try {
+      await ctx.state.update((next) => {
+        const target = next.sandboxes.find((item) => item.id === record.id);
+        if (!target) return;
+        target.pid = pid;
+        target.port = booted.port;
+        target.token = booted.token;
+        target.ready = booted.ready;
+      });
+    } catch (error) {
+      killTree(pid);
+      throw error;
+    }
+    return { started: record.id, port: booted.port, token: booted.token, pid, ready: booted.ready };
+  } catch (error) {
+    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
+    throw new SandboxError(
+      `${asMessage(error)}
+--- boot.log ---
+${log.trim().split("\n").slice(-40).join("\n")}`,
+      "start-failed",
+      true
+    );
+  }
+}
 async function destroySandbox(ctx, input) {
   const state = await ctx.state.read();
   const record = state.sandboxes.find((item) => item.id === input.id || item.name === input.id);
@@ -828,14 +884,8 @@ async function clientEntries(port) {
 }
 async function readStatus(ctx, id) {
   const record = await requireRecord(ctx, id);
-  let alive2 = false;
-  try {
-    process.kill(record.pid, 0);
-    alive2 = true;
-  } catch {
-    alive2 = false;
-  }
-  const listening = alive2 ? await portOpen(record.port) : false;
+  const up = alive(record.pid);
+  const listening = up ? await portOpen(record.port) : false;
   let log = "";
   try {
     log = await fsp7.readFile(record.logFile, "utf8");
@@ -847,7 +897,7 @@ async function readStatus(ctx, id) {
   const errors = log.split("\n").filter((line) => ERROR_LINE.test(line)).slice(-5).map((line) => line.trim().slice(0, 240));
   return {
     id: record.id,
-    alive: alive2,
+    alive: up,
     listening,
     port: record.port,
     pid: record.pid,
@@ -900,6 +950,8 @@ function createManager(root = resolveRoot()) {
     install: (input) => installPackage(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
+    stop: (input) => stopSandbox(ctx, input),
+    start: (input) => startSandbox(ctx, input),
     destroy: (input) => destroySandbox(ctx, input),
     reconfigure: (input) => reconfigureSandbox(ctx, input),
     tail: (input) => readTail(ctx, input),
@@ -945,6 +997,12 @@ async function dispatch(manager, method, route, query, body) {
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : void 0
     }) };
   }
+  if (route === "stop" && method === "POST") {
+    return manager.stop({ id: asId(await body()) });
+  }
+  if (route === "start" && method === "POST") {
+    return manager.start({ id: asId(await body()) });
+  }
   if (route === "destroy" && method === "POST") {
     return manager.destroy({ id: asId(await body()) });
   }
@@ -964,9 +1022,7 @@ var TEXT_OUTPUT = {
   schema: { type: "object" },
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value, null, 2) }]
 };
-function registerSandboxTools(ctx, manager) {
-  const tools = ctx.get("tools");
-  if (!tools) return;
+function registerSandboxTools(tools, manager) {
   tools.register({
     name: "sandbox_create",
     description: "Create an isolated DSH sandbox: its own home, profile, port and sessions, with the work profile untouched. Use it to try a plugin before installing it into the real profile.",
@@ -1031,6 +1087,33 @@ function registerSandboxTools(ctx, manager) {
     execute: async (args) => manager.status(args.id)
   });
   tools.register({
+    name: "sandbox_stop",
+    description: "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, so it can be started again later. Use this instead of sandbox_destroy when the data should survive.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.stop(args)
+  });
+  tools.register({
+    name: "sandbox_start",
+    description: "Start a previously stopped sandbox again from its existing home and profile. The port may change; the result carries the new port and token.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 18e4,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.start(args)
+  });
+  tools.register({
     name: "sandbox_destroy",
     description: "Destroy a sandbox: kill its process tree, wait for the port to close, delete its home directory.",
     parameters: {
@@ -1048,32 +1131,37 @@ function registerSandboxTools(ctx, manager) {
 // src/components/sandbox-manager/register.ts
 function registerSandboxManager(ctx) {
   const manager = createManager();
-  registerSandboxTools(ctx, manager);
-  const web = ctx.get("webServer");
-  if (!web) return;
-  const handler = async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    const route = stripRoutePrefix(url.pathname);
-    try {
-      if (route === STYLESHEET_ROUTE && (req.method ?? "GET") === "GET") {
-        const css = await readStylesheet();
-        res.writeHead(200, {
-          "content-type": "text/css; charset=utf-8",
-          "cache-control": "no-cache",
-          "content-length": Buffer.byteLength(css)
-        });
-        res.end(css);
-        return;
+  ctx.inject(["tools"], (scope) => {
+    const tools = scope.tools;
+    if (tools) registerSandboxTools(tools, manager);
+  });
+  ctx.inject(["webServer"], (scope) => {
+    const web = scope.webServer;
+    if (!web) return;
+    const handler = async (req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      const route = stripRoutePrefix(url.pathname);
+      try {
+        if (route === STYLESHEET_ROUTE && (req.method ?? "GET") === "GET") {
+          const css = await readStylesheet();
+          res.writeHead(200, {
+            "content-type": "text/css; charset=utf-8",
+            "cache-control": "no-cache",
+            "content-length": Buffer.byteLength(css)
+          });
+          res.end(css);
+          return;
+        }
+        const result = await dispatch(manager, req.method ?? "GET", route, url.searchParams, () => readJsonBody(req));
+        sendJson(res, 200, { ok: true, ...typeof result === "object" && result ? result : { value: result } });
+      } catch (error) {
+        const status = error instanceof SandboxError && error.code === "unknown-route" ? 404 : 500;
+        sendJson(res, status, { ok: false, error: asMessage(error) });
       }
-      const result = await dispatch(manager, req.method ?? "GET", route, url.searchParams, () => readJsonBody(req));
-      sendJson(res, 200, { ok: true, ...typeof result === "object" && result ? result : { value: result } });
-    } catch (error) {
-      const status = error instanceof SandboxError && error.code === "unknown-route" ? 404 : 500;
-      sendJson(res, status, { ok: false, error: asMessage(error) });
-    }
-  };
-  const dispose = web.register({ kind: "prefix", path: ROUTE_PREFIX, handler });
-  ctx.effect?.(() => () => dispose());
+    };
+    const dispose = web.register({ kind: "prefix", path: ROUTE_PREFIX, handler });
+    scope.effect?.(() => () => dispose());
+  });
 }
 
 // src/entries/host.ts

@@ -11,6 +11,8 @@ export interface SandboxRowProps {
   onToggle: () => void;
   onOpen: () => void;
   onDetail: () => void;
+  onStop: () => void;
+  onStart: () => void;
   onDestroy: () => void;
 }
 
@@ -23,7 +25,7 @@ const ago = (at: number): string => {
   return `${Math.round(seconds / 86400)} 天前`;
 };
 
-/** 一行实例：状态点、身份、三个动作、可展开的对话。 */
+/** 一行实例：状态点、身份、动作组、可展开的对话。 */
 export function SandboxRow(props: SandboxRowProps) {
   const { sandbox, expanded, events, busy } = props;
   const live = sandbox.alive && sandbox.listening;
@@ -42,6 +44,9 @@ export function SandboxRow(props: SandboxRowProps) {
         h("button", { className: "sbx-btn", type: "button", onClick: props.onToggle },
           expanded ? TEXTS.collapse : TEXTS.tail),
         h("button", { className: "sbx-btn", type: "button", disabled: !live, onClick: props.onOpen }, TEXTS.open),
+        live
+          ? h("button", { className: "sbx-btn", type: "button", disabled: busy, onClick: props.onStop }, TEXTS.stop)
+          : h("button", { className: "sbx-btn sbx-btn-primary", type: "button", disabled: busy, onClick: props.onStart }, TEXTS.start),
         h("button", { className: "sbx-btn", type: "button", onClick: props.onDetail }, TEXTS.detail),
         h("button", { className: "sbx-btn sbx-btn-danger", type: "button", disabled: busy, onClick: props.onDestroy },
           TEXTS.destroy))),

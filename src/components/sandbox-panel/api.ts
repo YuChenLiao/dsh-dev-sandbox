@@ -21,6 +21,12 @@ export const createSandbox = (input: { name?: string; bundles?: string[] }): Pro
 export const destroySandbox = (id: string): Promise<DestroyResult> =>
   apiPost<DestroyResult>("destroy", { id });
 
+export const stopSandbox = (id: string): Promise<{ stopped: string; portClosed: boolean }> =>
+  apiPost("stop", { id });
+
+export const startSandbox = (id: string): Promise<{ started: string; port: number; token: string; pid: number; ready: boolean }> =>
+  apiPost("start", { id });
+
 export const fetchTail = (id: string, limit: number): Promise<TailResult> =>
   apiGet<TailResult>(`tail?id=${encodeURIComponent(id)}&limit=${limit}`);
 

@@ -9,33 +9,42 @@ export interface SlotsLike {
 
 /** dsh-better-sidebar 的侧栏注册面；只依赖这一个方法，不引入它的包。 */
 export interface SidebarLike {
-  registerTab(tab: { id: string; title: string; component: unknown }): unknown;
+  registerTab(tab: {
+    id: string;
+    title: string;
+    description?: string;
+    component: unknown;
+  }): unknown;
 }
 
 export interface PanelContext {
   slots: SlotsLike;
-  get?(name: string): unknown;
+  inject(deps: string[], callback: (scope: { betterSidebar?: SidebarLike }) => void): unknown;
 }
 
 /**
- * 装了 better-sidebar 就进侧栏，否则退回设置页——同一份组件，两个入口。
+ * 两个入口，同一份组件。
  *
- * 用 `ctx.get` 而不是 `inject: ["betterSidebar"]`：后者在没装该插件时会让整个 client 插件不 apply，
- * 连设置页都进不去。代价是没有顺序保证——若它的服务在本插件 apply 之后才注册，这里拿不到就会
- * 永久落到设置分支。当前 profile 里 better-sidebar 排在前面，但那是环境巧合。
+ * 侧栏用 `ctx.inject(["betterSidebar"], …)` 挂：它是 cordis 的子 fiber，服务就绪后才执行，
+ * 而且服务不存在时只是永不执行——不会像 `inject: ["betterSidebar"]` 那样让整个插件不 apply。
+ * 原来用 `ctx.get` 同步取，依赖 apply 顺序，better-sidebar 后注册就拿不到且不重试。
+ *
+ * 设置页那一节无条件注册作为兜底：侧栏没装、没开、或者 tab 被关掉时仍然进得去。
  */
 export function registerPanel(ctx: PanelContext): void {
   ensureStylesheet();
 
-  let sidebar: SidebarLike | undefined;
-  try {
-    sidebar = ctx.get?.("betterSidebar") as SidebarLike | undefined;
-  } catch {
-    sidebar = undefined;
-  }
-  if (sidebar && typeof sidebar.registerTab === "function") {
-    sidebar.registerTab({ id: PANEL_ID, title: TEXTS.navLabel, component: SandboxPanel });
-    return;
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["betterSidebar"], (scope) => {
+      const sidebar = scope.betterSidebar;
+      if (!sidebar || typeof sidebar.registerTab !== "function") return;
+      sidebar.registerTab({
+        id: PANEL_ID,
+        title: TEXTS.navLabel,
+        description: TEXTS.subtitle,
+        component: SandboxPanel,
+      });
+    });
   }
 
   ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(

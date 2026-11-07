@@ -52,6 +52,11 @@ export interface DestroyInput {
   id: string;
 }
 
+/** 停止与启动共用同一个入参形状：只认实例。 */
+export interface LifecycleInput {
+  id: string;
+}
+
 export interface TailInput {
   id: string;
   limit?: number;
@@ -84,6 +89,21 @@ export interface LogResult {
 export interface DestroyResult {
   destroyed: string;
   portClosed: boolean;
+}
+
+/** 停止：进程结束、端口释放，home 与对话都留着，之后可以再启动。 */
+export interface StopResult {
+  stopped: string;
+  portClosed: boolean;
+}
+
+/** 启动：用已有目录与 profile 重新起进程，端口可能变化。 */
+export interface StartResult {
+  started: string;
+  port: number;
+  token: string;
+  pid: number;
+  ready: boolean;
 }
 
 export interface ReconfigureResult {

@@ -7,6 +7,7 @@ import type {
   DestroyResult,
   InstallInput,
   InstallResult,
+  LifecycleInput,
   LogInput,
   LogResult,
   PromptInput,
@@ -15,13 +16,15 @@ import type {
   ReconfigureResult,
   SandboxRecord,
   SandboxView,
+  StartResult,
   StatusResult,
+  StopResult,
   TailInput,
   TailResult,
 } from "../../shared/types.ts";
 import { readLog, listSandboxes, readTail } from "./inspect.ts";
 import { installPackage } from "./install.ts";
-import { createSandbox, destroySandbox } from "./lifecycle.ts";
+import { createSandbox, destroySandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
 import { promptSandbox } from "./prompt.ts";
 import { readStatus } from "./status.ts";
 import { reconfigureSandbox } from "./reconfigure.ts";
@@ -35,6 +38,8 @@ export interface SandboxManager {
   install(input: InstallInput): Promise<InstallResult>;
   prompt(input: PromptInput): Promise<PromptResult>;
   status(id: string): Promise<StatusResult>;
+  stop(input: LifecycleInput): Promise<StopResult>;
+  start(input: LifecycleInput): Promise<StartResult>;
   destroy(input: DestroyInput): Promise<DestroyResult>;
   reconfigure(input: ReconfigureInput): Promise<ReconfigureResult>;
   tail(input: TailInput): Promise<TailResult>;
@@ -51,6 +56,8 @@ export function createManager(root = resolveRoot()): SandboxManager {
     install: (input) => installPackage(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
+    stop: (input) => stopSandbox(ctx, input),
+    start: (input) => startSandbox(ctx, input),
     destroy: (input) => destroySandbox(ctx, input),
     reconfigure: (input) => reconfigureSandbox(ctx, input),
     tail: (input) => readTail(ctx, input),

@@ -1,12 +1,11 @@
 import type { SandboxManager } from "./manager.ts";
-import type { HostContext } from "./types.ts";
 
 const TEXT_OUTPUT = {
   schema: { type: "object" as const },
   render: (_args: unknown, value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
 };
 
-interface ToolsLike {
+export interface ToolsLike {
   register(definition: Record<string, unknown>, options?: Record<string, unknown>): () => void;
 }
 
@@ -14,10 +13,7 @@ interface ToolsLike {
  * 五个工具：入参只有标识与文本，没有路径、没有命令。
  * 会话工作区、沙箱 policy、凭据位置都由 manager 内部决定，模型无从指定。
  */
-export function registerSandboxTools(ctx: HostContext, manager: SandboxManager): void {
-  const tools = ctx.get("tools") as ToolsLike | undefined;
-  if (!tools) return;
-
+export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager): void {
   tools.register({
     name: "sandbox_create",
     description:
@@ -93,6 +89,39 @@ export function registerSandboxTools(ctx: HostContext, manager: SandboxManager):
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     execute: async (args: unknown) => manager.status((args as { id: string }).id),
+  });
+
+  tools.register({
+    name: "sandbox_stop",
+    description:
+      "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, "
+      + "so it can be started again later. Use this instead of sandbox_destroy when the data should survive.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.stop(args as { id: string }),
+  });
+
+  tools.register({
+    name: "sandbox_start",
+    description:
+      "Start a previously stopped sandbox again from its existing home and profile. The port may change; "
+      + "the result carries the new port and token.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 180_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.start(args as { id: string }),
   });
 
   tools.register({

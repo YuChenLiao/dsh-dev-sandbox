@@ -53,6 +53,12 @@ export async function dispatch(
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : undefined,
     } satisfies CreateSandboxInput) };
   }
+  if (route === "stop" && method === "POST") {
+    return manager.stop({ id: asId(await body()) });
+  }
+  if (route === "start" && method === "POST") {
+    return manager.start({ id: asId(await body()) });
+  }
   if (route === "destroy" && method === "POST") {
     return manager.destroy({ id: asId(await body()) });
   }

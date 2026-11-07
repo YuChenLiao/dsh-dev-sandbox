@@ -3,7 +3,7 @@ import path from "node:path";
 import type { StatusResult } from "../../shared/types.ts";
 import { portOpen } from "../../shared/process.ts";
 import { listSessionFiles } from "../../shared/sessionLog.ts";
-import { requireRecord } from "./inspect.ts";
+import { alive, requireRecord } from "./inspect.ts";
 import type { ManagerContext } from "./types.ts";
 
 const ERROR_LINE = /error|failed|cannot resolve|EADDRINUSE/i;
@@ -38,14 +38,8 @@ async function clientEntries(port: number): Promise<string[]> {
 
 export async function readStatus(ctx: ManagerContext, id: string): Promise<StatusResult> {
   const record = await requireRecord(ctx, id);
-  let alive = false;
-  try {
-    process.kill(record.pid, 0);
-    alive = true;
-  } catch {
-    alive = false;
-  }
-  const listening = alive ? await portOpen(record.port) : false;
+  const up = alive(record.pid);
+  const listening = up ? await portOpen(record.port) : false;
 
   let log = "";
   try {
@@ -65,7 +59,7 @@ export async function readStatus(ctx: ManagerContext, id: string): Promise<Statu
 
   return {
     id: record.id,
-    alive,
+    alive: up,
     listening,
     port: record.port,
     pid: record.pid,

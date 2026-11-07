@@ -41,7 +41,7 @@ dsh-dev-sandbox/
         │   ├── types.ts          # ManagerContext / HostContext / WebServerLike
         │   ├── profile.ts        # profile 清单、.env、凭据继承、官方包解析
         │   ├── boot.ts           # 起进程、解析地址、等就绪、失败自杀
-        │   ├── lifecycle.ts      # create / destroy
+        │   ├── lifecycle.ts      # create / stop / start / destroy
         │   ├── install.ts        # 把工作区插件 junction 进沙箱 profile
         │   ├── runProfile.ts     # headless 运行 profile：base + headless + 待测插件
         │   ├── prompt.ts         # 在沙箱里真跑一轮对话
@@ -51,7 +51,7 @@ dsh-dev-sandbox/
         │   ├── assets.ts         # 读取构建产物 panel.css
         │   ├── routes.ts         # HTTP 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
-        │   ├── tools.ts          # 交给模型的五个工具
+        │   ├── tools.ts          # 交给模型的七个工具
         │   └── register.ts       # 注册工具与 /__sbx
         └── sandbox-panel/        # client 可注册组件
             ├── config.ts         # 槽位、组件排序、轮询间隔、全部中文文案 TEXTS
@@ -100,7 +100,7 @@ dsh-dev-sandbox/
 2. `src/entries/host.ts` 与 `src/entries/client.ts`，确认装配关系。
 3. 按上表跳到具体文件。
 
-改 client 图（`sandbox-panel/*.ts`、`shared/api.ts`、`entries/client.ts`、`build.mjs` 的 banner/footer）之后必须 bump `version` 并重装，宿主按版本缓存字节。只改 `panel.css` 不必 bump，但仍要重建并提交 `dist/panel.css`。
+改 client 图（`sandbox-panel/*.ts`、`shared/api.ts`、`entries/client.ts`、`build.mjs` 的 banner/footer）之后必须 bump `version` 并重装，宿主按版本缓存字节。只改 `panel.css` 不用 bump：`readStylesheet` 每次请求都读盘，`pnpm build` 之后刷新页面即可，不需要重启宿主。
 
 # 提交纪律
 
@@ -157,7 +157,7 @@ tree 的取法：在真正 `git add <文件>` 之后、`git commit` 之前跑 `g
 
 - `dist/` 提交进仓库：GitHub 安装时按 `files` 从仓库取这些文件，漏提交或忘记 build 会装出坏包。
 - 构建产物有三个：`dist/index.js`（host 半侧）、`dist/client.js`（client 图）、`dist/panel.css`（外部样式表）。
-- 改 client 图必须 bump `version`，宿主按版本缓存字节。只改 `panel.css` 不用 bump，但它也不会实时生效：host 首次请求时读取并缓存在模块作用域里，改完要 `pnpm build` 并重启宿主，否则继续返回旧样式。
+- 改 client 图必须 bump `version`，宿主按版本缓存字节。只改 `panel.css` 不用 bump：`readStylesheet` 每次请求都读盘，`pnpm build` 之后刷新页面即可，不需要重启宿主。
 - 构建 `pnpm build`，类型检查 `pnpm typecheck`。
 
 ## 平台

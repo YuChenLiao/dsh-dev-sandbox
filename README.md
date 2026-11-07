@@ -1,6 +1,6 @@
 # dsh-dev-sandbox
 
-在 DeepSeek Harness 里管理隔离的开发沙箱：为待测插件起一个真实、干净、互不干扰的 DSH 实例，并在设置页里直接创建、查看和销毁它。
+在 DeepSeek Harness 里管理隔离的开发沙箱：为待测插件起一个真实、干净、互不干扰的 DSH 实例，并在侧栏（或设置页）直接创建、查看、停止和销毁它。
 
 ## 它解决什么
 
@@ -28,7 +28,9 @@ dsh plugin --profile <profile> remove dsh-dev-sandbox
 - **观察**：状态点（运行中呼吸、已停止静止）、端口、会话数、bundle 数、存在时长，15 秒自动刷新一次。
 - **对话**：展开看最近 24 条事件，只读，来自沙箱自己的会话落盘文件。
 - **打开**：带 token 打开沙箱自己的页面。
-- **销毁**：结束整棵进程树、等端口释放、删除 home 目录。
+- **详情**：单个实例的运行期事实——进程、端口、权限档位、会话数、客户端图、启动日志里的错误。
+- **停止 / 启动**：停止只结束进程、释放端口，home、profile 与对话全部保留；启动用同一份目录重新起进程，端口可能变。列表里停止的实例按钮会变成「启动」。
+- **销毁**：结束整棵进程树、等端口释放、删除 home 目录。和停止的区别是它会删掉数据。
 
 创建是同步等就绪的：宿主完成组合、监听起来之后才出现在列表里，通常十几秒。
 
@@ -50,7 +52,7 @@ dsh plugin --profile <profile> remove dsh-dev-sandbox
 
 ## 工作原理
 
-host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.section` 注册一节，两面都只做装配，逻辑在组件目录里。
+host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-sidebar` 存在时注册一个侧栏 tab，并始终在 `settings.section` 注册一节作为兜底（侧栏没装或被关掉时仍进得去）。两面都只做装配，逻辑在组件目录里。两侧的服务依赖都走 `ctx.inject`：`ctx.get` 在服务未就绪时返回 `undefined`，会让路由或侧栏 tab 静默不注册。
 
 创建一个实例的流程：
 
@@ -73,6 +75,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.sect
 | --- | --- | --- |
 | `GET` | `/list` | 列出实例与状态 |
 | `POST` | `/create` | `{ name?, bundles?, apiKey? }` |
+| `POST` | `/stop` | `{ id }`，停进程、留数据 |
+| `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
 | `POST` | `/destroy` | `{ id }` |
 | `POST` | `/config` | `{ id, bundles?, restart? }`，先过 `--dump-config` 预检，失败自动回滚 |
 | `GET` | `/tail?id=&limit=` | 读沙箱对话 |
@@ -90,6 +94,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `settings.sect
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
 | `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
+| `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |
+| `sandbox_start` | 用已有目录重启，返回新端口与 token |
 | `sandbox_destroy` | 销毁 |
 
 入参只有实例 id 与包名或文本，没有路径、没有命令、没有环境变量。会话工作区、沙箱 policy、凭据位置都由插件内部决定，模型无从指定。
