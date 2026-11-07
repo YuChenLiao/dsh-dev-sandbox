@@ -39,7 +39,8 @@ dsh plugin --profile <profile> remove dsh-dev-sandbox
 - 独立的 `DSH_HOME`、profile、workspace、端口和 token。
 - 子进程环境只保留系统变量，所有 `DSH_*` 丢弃后显式重设，不会继承 `DSH_SESSION_ID`、`DSH_WEB_URL`、`DSH_PROFILE` 这类会误导插件的变量。
 - 新实例里没有会话、没有设置、没有记忆、没有任何插件数据，profile 层只有一份空补丁。
-- 模型凭据不复制。沙箱的 `.credentials.yaml` 只有它自己的 browser-session 记录；要让它调模型，得单独提供 key。
+- 模型凭据继承工作环境：创建时复制 `.credentials.yaml`，但剥掉 GUI 会话记录，沙箱启动时自己生成新的 browser-session。沙箱因此能直接调模型，而两边的浏览器登录态互不相通。凭据是创建那一刻的快照，工作环境刷新 token 后重建沙箱即可。
+- 那份凭据是**同权限的明文副本**：它一直躺在沙箱 home 里直到实例被销毁，沙箱内任何进程都能读它。读不到源文件或格式变化时整份不继承，沙箱的 `boot.log` 里能 grep 到 `credentials: skipped`；写不进沙箱 home 时创建直接失败，不会留一个半配置的实例。
 - 浏览器侧互不串：cookie 名与签名 audience 绑定 hostname 和端口，工作页面的登录态不会被带过去。
 
 没做到的：

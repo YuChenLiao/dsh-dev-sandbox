@@ -39,7 +39,7 @@ dsh-dev-sandbox/
         ├── sandbox-manager/      # host 可注册组件
         │   ├── config.ts         # 实例目录名、profile 包名、启动参数
         │   ├── types.ts          # ManagerContext / HostContext / WebServerLike
-        │   ├── profile.ts        # profile 清单、.env、官方包解析
+        │   ├── profile.ts        # profile 清单、.env、凭据继承、官方包解析
         │   ├── boot.ts           # 起进程、解析地址、等就绪、失败自杀
         │   ├── lifecycle.ts      # create / destroy
         │   ├── inspect.ts        # list / tail / log
@@ -75,7 +75,7 @@ dsh-dev-sandbox/
 | 新增一个静态资源路由 | `sandbox-manager/register.ts` 的 prefix handler 加分支，路径常量放 `shared/routes.ts` |
 | 创建、销毁的流程 | `src/components/sandbox-manager/lifecycle.ts` |
 | 启动参数、端口策略 | `src/components/sandbox-manager/config.ts` 的 `BOOT_ARGS` |
-| profile 里放什么、凭据怎么给 | `src/components/sandbox-manager/profile.ts` |
+| profile 里放什么、凭据怎么继承 | `src/components/sandbox-manager/profile.ts` |
 | 改配置时的预检与回滚 | `src/components/sandbox-manager/reconfigure.ts` |
 | 怎么读沙箱对话 | `src/shared/sessionLog.ts` |
 | 子进程环境、进程树终止 | `src/shared/process.ts` 与 `src/shared/config.ts` 的 `KEEP_ENV` |

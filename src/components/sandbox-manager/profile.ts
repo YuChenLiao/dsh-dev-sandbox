@@ -4,7 +4,10 @@ import { DEFAULT_BUNDLES, SANDBOX_PROFILE } from "../../shared/config.ts";
 import { workHome } from "../../shared/paths.ts";
 import {
   API_KEY_ENV,
+  BROWSER_SESSION_RECORD,
+  CREDENTIALS_FILE,
   ENV_FILE,
+  PLATFORM_ACCOUNT_PREFIX,
   PROFILE_NODE_MODULES,
   PROFILE_PACKAGE_NAME,
   PROFILE_PATCH_BODY,
@@ -36,10 +39,52 @@ export async function writeProfile(paths: SandboxPaths, bundles: readonly string
   if (!exists) await fsp.writeFile(patch, PROFILE_PATCH_BODY);
 }
 
-/** 模型凭据只经过沙箱自己的 .env，绝不复制工作环境的 .credentials.yaml。 */
+/** 显式传入的 key 走沙箱自己的 .env；工作环境凭据的继承见 writeInheritedCredentials。 */
 export async function writeEnvFile(paths: SandboxPaths, apiKey: string | undefined): Promise<void> {
   if (!apiKey) return;
   await fsp.writeFile(path.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}\n`);
+}
+
+export type CredentialInheritance = "inherited" | "skipped";
+
+/**
+ * 模型凭据从工作环境继承：复制 .credentials.yaml，但剥掉 GUI 会话记录。
+ * 沙箱启动时发现缺 browser-session 会自己生成一份，所以两边的 cookie 签名密钥互不相同；
+ * deepseek-account-platform/* 与 refs 里的 API key 则原样带过去，沙箱不必再单独登录。
+ * 快照只在创建时取一次，工作环境后续刷新 token 后重建沙箱即可。
+ * 注意 device 记录里的 payload.id 也会一并继承，两个实例因此共用同一个设备标识；
+ * 若服务端按设备维度做会话或风控，可能出现互踢。
+ *
+ * 边界：这是黑名单实现（剥一条），fail-closed 只保证「剥不掉就不继承」；
+ * dsh 将来往 records 里新增的敏感记录类型不在它的保护范围内，那时要改成白名单。
+ */
+export async function writeInheritedCredentials(paths: SandboxPaths): Promise<CredentialInheritance> {
+  const source = path.join(workHome(), CREDENTIALS_FILE);
+  const text = await fsp.readFile(source, "utf8").catch(() => undefined);
+  if (!text) return "skipped";
+  const filtered = stripCredentialRecord(text, BROWSER_SESSION_RECORD);
+  // 失败即放弃（fail-closed）：剥不掉就整份不继承，宁可沙箱没凭据，也不把 GUI 会话密钥带过去。
+  if (filtered.includes(BROWSER_SESSION_RECORD)) return "skipped";
+  if (!filtered.includes("records:") || !filtered.includes(PLATFORM_ACCOUNT_PREFIX)) return "skipped";
+  await fsp.writeFile(path.join(paths.home, CREDENTIALS_FILE), filtered);
+  return "inherited";
+}
+
+/** 按顶层 map 的缩进结构切块：只删除 id 等于 key 的那一块，其余原样保留。 */
+function stripCredentialRecord(text: string, key: string): string {
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of text.split(/\r?\n/)) {
+    const entry = /^ {2}(\S.*):\s*$/.exec(line);
+    if (entry) {
+      skipping = entry[1] === key;
+      if (skipping) continue;
+    } else if (/^\S/.test(line)) {
+      skipping = false;
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n");
 }
 
 /**

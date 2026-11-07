@@ -15,6 +15,11 @@ export const PROFILE_PACKAGE_NAME = "dsh-profile-sbx";
 export const PROFILE_PATCH_BODY = "# 沙箱 profile 层：只放本实例的行\n[]\n";
 export const API_KEY_ENV = "DEEPSEEK_API_KEY";
 
+/** 凭据继承：复制工作环境的凭据文件，但剥掉这条 GUI 会话记录。 */
+export const CREDENTIALS_FILE = ".credentials.yaml";
+export const BROWSER_SESSION_RECORD = "client-connection/browser-session";
+export const PLATFORM_ACCOUNT_PREFIX = "deepseek-account-platform/";
+
 /** 启动参数。端口固定交给系统分配，避免与工作环境的 6945 撞车。 */
 export const BOOT_ARGS = ["--profile", "sbx", "--port", "0", "--no-open"] as const;
 export const DUMP_CONFIG_ARGS = ["--profile", "sbx", "--dump-config"] as const;

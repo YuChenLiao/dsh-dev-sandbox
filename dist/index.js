@@ -372,6 +372,9 @@ var ENV_FILE = ".env";
 var PROFILE_PACKAGE_NAME = "dsh-profile-sbx";
 var PROFILE_PATCH_BODY = "# \u6C99\u7BB1 profile \u5C42\uFF1A\u53EA\u653E\u672C\u5B9E\u4F8B\u7684\u884C\n[]\n";
 var API_KEY_ENV = "DEEPSEEK_API_KEY";
+var CREDENTIALS_FILE = ".credentials.yaml";
+var BROWSER_SESSION_RECORD = "client-connection/browser-session";
+var PLATFORM_ACCOUNT_PREFIX = "deepseek-account-platform/";
 var BOOT_ARGS = ["--profile", "sbx", "--port", "0", "--no-open"];
 var DUMP_CONFIG_ARGS = ["--profile", "sbx", "--dump-config"];
 
@@ -459,6 +462,31 @@ async function writeEnvFile(paths, apiKey) {
   await fsp3.writeFile(path2.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
 `);
 }
+async function writeInheritedCredentials(paths) {
+  const source = path2.join(workHome(), CREDENTIALS_FILE);
+  const text = await fsp3.readFile(source, "utf8").catch(() => void 0);
+  if (!text) return "skipped";
+  const filtered = stripCredentialRecord(text, BROWSER_SESSION_RECORD);
+  if (filtered.includes(BROWSER_SESSION_RECORD)) return "skipped";
+  if (!filtered.includes("records:") || !filtered.includes(PLATFORM_ACCOUNT_PREFIX)) return "skipped";
+  await fsp3.writeFile(path2.join(paths.home, CREDENTIALS_FILE), filtered);
+  return "inherited";
+}
+function stripCredentialRecord(text, key) {
+  const out = [];
+  let skipping = false;
+  for (const line of text.split(/\r?\n/)) {
+    const entry = /^ {2}(\S.*):\s*$/.exec(line);
+    if (entry) {
+      skipping = entry[1] === key;
+      if (skipping) continue;
+    } else if (/^\S/.test(line)) {
+      skipping = false;
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n");
+}
 async function ensureModuleResolution(paths) {
   const link = path2.join(paths.home, "profiles", PROFILE_NODE_MODULES);
   const shared = path2.join(workHome(), "profiles", PROFILE_NODE_MODULES);
@@ -493,8 +521,11 @@ async function createSandbox(ctx, input) {
   try {
     await writeProfile(paths, bundles);
     await writeEnvFile(paths, input.apiKey);
+    const credentials = await writeInheritedCredentials(paths);
     await ensureModuleResolution(paths);
     const booted = await boot(paths, env);
+    await fsp4.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}
+`).catch((error) => console.error("[sandbox] \u5199 credentials \u89C2\u6D4B\u884C\u5931\u8D25", error));
     const record = {
       id,
       name: input.name?.trim() || id,

@@ -13,7 +13,7 @@ import {
   PROFILE_DIR,
   WORKSPACE_DIR,
 } from "./config.ts";
-import { ensureModuleResolution, resolveBundles, writeEnvFile, writeProfile } from "./profile.ts";
+import { ensureModuleResolution, resolveBundles, writeEnvFile, writeInheritedCredentials, writeProfile } from "./profile.ts";
 import type { ManagerContext, SandboxPaths } from "./types.ts";
 
 export function newInstanceId(): string {
@@ -43,9 +43,13 @@ export async function createSandbox(ctx: ManagerContext, input: CreateSandboxInp
   try {
     await writeProfile(paths, bundles);
     await writeEnvFile(paths, input.apiKey);
+    const credentials = await writeInheritedCredentials(paths);
     await ensureModuleResolution(paths);
 
     const booted = await boot(paths, env);
+    // fail-closed 是静默的，留一行观测点：沙箱里模型鉴权失败时能立刻分辨是不是没继承。
+    await fsp.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}\n`)
+      .catch((error: unknown) => console.error("[sandbox] 写 credentials 观测行失败", error));
     const record: SandboxRecord = {
       id,
       name: input.name?.trim() || id,
