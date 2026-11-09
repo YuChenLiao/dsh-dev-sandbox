@@ -100,7 +100,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `sandbox_create` | 建实例，返回端口、token 与就绪状态 |
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
 | `sandbox_add_skill` | 把工作区的 skill 目录链进沙箱自己的技能根 |
-| `sandbox_add_mcp` | 给沙箱配一个 MCP server（写进 profile 补丁的两套） || `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
+| `sandbox_add_mcp` | 给沙箱配一个 MCP server（写进 profile 补丁的两套） |
+| `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
 | `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |
@@ -116,7 +117,7 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 
 ## 配置
 
-两个环境变量，都要在启动 `dsh` 之前设进去：
+三个环境变量，都要在启动 `dsh` 之前设进去：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
