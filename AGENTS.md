@@ -107,21 +107,37 @@ dsh-dev-sandbox/
 
 ## 强制：提交前必须经子代理审查
 
-任何人（包括自动化代理）在 `git commit` 之前，必须把本次改动交给一个独立的子代理审查。只有审查结论为 `PASS` 才允许提交；`FAIL` 时先修，再重新送审。审查者不能是本次改动的作者。
+任何人（包括自动化代理）在 `git commit` 之前，必须把本次改动交给一个独立的子代理审查。审查者不能是本次改动的作者。
 
-当前会话无法派生子代理时（例如代理深度耗尽），由父代理执行同样的审查。**父代理同时是作者时，独立性要求没有被满足**，结论必须标为 `review: self-review`，不得写成 `PASS`；需要真正的独立结论时，换一个会话或交给人工确认。
+- 结论是 `PASS`，或按下一行记为 `review: self-review`，才能提交。
+- 派不出子代理时由父代理自查，记 `review: self-review`：允许落库，但算欠账，下次能派子代理时补审，另起一条 `chore:` 提交。
+
+审查者只用 `subagent`。`subagent_fork` 和 `send_message` 都会把作者已有的取舍带进去，那样的审查不算数。
+
+提交信息格式：
+
+```text
+<type>: <摘要> (review: PASS, reviewer: <id>, tree: <git write-tree 的前 12 位>)
+```
+
+- `reviewer`：审查者子代理 id 去掉 `session-` 前缀后的前 8 位十六进制。self-review 没有审查者，写 `reviewer: self`。
+- `tree`：`git add` 真正暂存之后、`git commit` 之前 `git write-tree` 的前 12 位。**别在 `git add -N` 状态下取树**——它会把未暂存的新文件静默丢掉，而提交出来的 tree 照样对得上。self-review 同样要写 `tree`。
+
+这三个字段只是留痕，不是证明：`reviewer` 是作者自填的字符串，`tree` 只证明字段与提交内容一致，`PASS` 是自述文本。仓库没有 git hook、没有 CI，机器层面拦不住任何绕过。**这条纪律靠自觉。**
+
+回退用 `git revert <sha>`，不改写已推送历史。
 
 ## 审查者要做什么
 
-1. **拿到被审内容。** 新增文件在暂存前不出现在 `git diff` 里。先跑 `git add -N $(git ls-files --others --exclude-standard)`（intent-to-add，只动 index），再读 `git status` 与 `git diff` 全文；仍未覆盖的文件逐个读全文。`git add -N` 是审查者唯一允许改动仓库状态的操作，`git add`、`commit`、`push` 一律禁止。
-2. **先记哈希。** 记下 `dist/client.js` 与 `dist/index.js` 的 sha256。构建会覆盖工作区产物，没有这一步就分不清「作者提交的产物」与「审查者重新构建的产物」。
-3. **构建与类型检查。** 在仓库根跑 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`，确认零错误。无网络时安装可能失败，这属于环境问题，必须在结论里与代码失败区分开。
+1. **拿到被审内容。** 跑 `git status --porcelain` 列出全部改动（含未跟踪的新文件）；新文件逐个读全文，其余读 `git diff`。不要 `git add`、`commit`、`push`。
+2. **先记哈希。** 记下 `dist/client.js`、`dist/index.js`、`dist/panel.css` 三个产物的 sha256。
+3. **构建与类型检查。** 跑 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`，确认零错误。无网络时安装失败属于环境问题，要在结论里与代码失败区分开。构建后三个产物的哈希应与第 2 步一致。
 4. **逐项核对阻塞项。**
-5. **输出结论。** 第一行 `PASS` 或 `FAIL`，随后逐条列问题，带文件与行号；`FAIL` 必须说明为什么阻塞。
+5. **输出结论。** 第一行只写 `PASS` 或 `FAIL`，随后逐条列问题、带文件与行号，**末尾附覆盖度**：读了哪些文件、跑了哪些命令、三个产物哈希构建前后是否一致。没有覆盖度的 `PASS` 与扫一眼给的 `PASS` 无法区分。
 
 ## 审查范围
 
-审查对象是这次提交的内容，以 `git diff --cached --name-only` 或 `-N` 之后的 `git diff` 为准。仓库之外的改动无法从仓库取证，不作为审查依据，也不能因为有它存在就判 `PASS`。
+审查对象是这次提交的内容，以 `git status` 与 `git diff` 为准。仓库之外的改动无法从仓库取证，不作为审查依据。
 
 ## 阻塞项（任一命中即 FAIL）
 
@@ -133,8 +149,8 @@ dsh-dev-sandbox/
 - `package.json` 的 `files` 与实际要发布的文件不一致，例如列了不存在的目录。
 - 运行时依赖越界。host 图（`build.mjs` 里的 `packages: "external"`）只允许 `node:` 内置模块；client 图只允许 `react` 与仓库内模块，其余第三方包会被 bundle 进 `dist/client.js`。判据是 diff 里的裸 import，不是构建是否通过。
 - 改了 `package.json` 的任何依赖字段（`dependencies`、`devDependencies`、`peerDependencies`、`pnpm.overrides`）却没有同步 `pnpm-lock.yaml`。判据就是第 3 步的 `--frozen-lockfile`。
-- README 与实际行为不一致。只核这三项，逐条对代码：安装命令里的仓库地址、`/__sbx` 接口路径与方法、两个环境变量名。
-- 「文件树」与 `git ls-files` 不一致。判定方法：先按第 1 步跑 `git add -N`，再跑 `git diff --name-status` 取 A/D/R 两侧的路径；`git ls-files` 仍含未暂存的删除项，对差前要扣掉 `git status` 里 ` D` 的路径。只改文件内容、不增删文件时不触发；根文件与 `src/` 同等对待。
+- README 与实际行为不一致。只核这三项，逐条对代码：安装命令里的仓库地址、`/__sbx` 接口路径与方法、三个环境变量名。
+- 「文件树」与 `git ls-files` 不一致。判定方法：新增文件从 `git status --porcelain` 的 `??` 行取（`git diff --name-status` 看不到未跟踪文件），删除/重命名从 `git diff --name-status` 取，两侧并起来与 `git ls-files` 对差；`git ls-files` 仍含未暂存的删除项，对差前要扣掉 `git status` 里 ` D` 的路径。只改文件内容、不增删文件时不触发；根文件与 `src/` 同等对待。
 
 ## 不阻塞但要在结论里提示
 
@@ -146,13 +162,7 @@ dsh-dev-sandbox/
 - 一个提交只做一件事。
 - 前缀用 `feat:` / `fix:` / `docs:` / `chore:` / `refactor:`。
 - 已经推送的提交不 amend。
-- 写审查结论与被审 tree：
-
-```text
-feat: <摘要> (review: PASS, tree: <git write-tree 的前 12 位>)
-```
-
-tree 的取法：在真正 `git add <文件>` 之后、`git commit` 之前跑 `git write-tree`。`-N`（intent-to-add）状态与 `git commit -a` 下取到的都是**父提交的 tree**，命令照样 exit 0 且无警告，会让记录无法复算。
+- 结论、`reviewer`、`tree` 三个字段的写法见上面「强制」一节的格式与取法。
 
 ## 版本与产物
 
