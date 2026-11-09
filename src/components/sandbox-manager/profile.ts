@@ -1,6 +1,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_BUNDLES, PACKAGE_NAME, SANDBOX_PROFILE } from "../../shared/config.ts";
+import type { McpEntry } from "../../shared/types.ts";
 import { SandboxError } from "../../shared/errors.ts";
 import { workHome } from "../../shared/paths.ts";
 import {
@@ -36,12 +37,16 @@ export function resolveBundles(bundles: readonly string[] | undefined): string[]
 }
 
 /** 建目录 + 写 profile 的两份文件；补丁层总是重写，把 policy 钉在 workspace。 */
-export async function writeProfile(paths: SandboxPaths, bundles: readonly string[]): Promise<void> {
+export async function writeProfile(
+  paths: SandboxPaths,
+  bundles: readonly string[],
+  mcp?: readonly McpEntry[],
+): Promise<void> {
   await fsp.mkdir(paths.profileDir, { recursive: true });
   await fsp.mkdir(paths.workspace, { recursive: true });
   await fsp.mkdir(paths.agentsHome, { recursive: true });
   await fsp.writeFile(path.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
-  await fsp.writeFile(path.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace));
+  await fsp.writeFile(path.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace, mcp));
 }
 
 /** 显式传入的 key 走沙箱自己的 .env；工作环境凭据的继承见 writeInheritedCredentials。 */

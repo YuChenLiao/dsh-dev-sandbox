@@ -14,6 +14,8 @@ export interface SandboxRecord {
   pid: number;
   createdAt: number;
   ready: boolean;
+  /** 已配置的 MCP server；每次重写 profile 补丁时按这份清单生成。 */
+  mcp?: McpEntry[];
 }
 
 /** 面板与工具看到的实例摘要，只含可展示字段。 */
@@ -55,6 +57,35 @@ export interface DestroyInput {
 /** 停止与启动共用同一个入参形状：只认实例。 */
 export interface LifecycleInput {
   id: string;
+}
+
+/** 一个 MCP server 的配置；config 原样写进沙箱 profile 的 dsh-mcp-client 行。 */
+export interface McpEntry {
+  serverName: string;
+  config: Record<string, unknown>;
+}
+
+export interface AddSkillInput {
+  id: string;
+  /** skill 目录名，来自工作目录下的 `skills/<name>` 或 `<name>/SKILL.md`。 */
+  name: string;
+}
+
+export interface AddSkillResult {
+  name: string;
+  source: string;
+  requiresRestart: boolean;
+}
+
+export interface AddMcpInput {
+  id: string;
+  serverName: string;
+  config: Record<string, unknown>;
+}
+
+export interface AddMcpResult {
+  servers: string[];
+  requiresRestart: boolean;
 }
 
 export interface TailInput {

@@ -487,9 +487,9 @@ async function readLog(ctx, input) {
   return { text: text.split("\n").slice(-lines).join("\n") };
 }
 
-// src/components/sandbox-manager/install.ts
-import fsp4 from "node:fs/promises";
-import path3 from "node:path";
+// src/components/sandbox-manager/extras.ts
+import fsp6 from "node:fs/promises";
+import path5 from "node:path";
 
 // src/components/sandbox-manager/config.ts
 var INSTANCE_ID_PREFIX = "sbx-";
@@ -504,7 +504,19 @@ var ENV_FILE = ".env";
 var PROFILE_PACKAGE_NAME = "dsh-profile-sbx";
 var PROFILE_PATCH_HEADER = "# \u6C99\u7BB1 profile \u5C42\uFF1A\u672C\u5B9E\u4F8B\u7684\u7EA6\u675F\u4E0E\u63D2\u4EF6\u884C";
 var API_KEY_ENV = "DEEPSEEK_API_KEY";
-function profilePatchBody(workspaceRoot) {
+function mcpLines(mcp) {
+  const lines = [];
+  for (const entry of mcp ?? []) {
+    lines.push(
+      "- insert:",
+      `    - id: mcp-${entry.serverName}`,
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      `      config: ${JSON.stringify(entry.config)}`
+    );
+  }
+  return lines;
+}
+function profilePatchBody(workspaceRoot, mcp) {
   return [
     PROFILE_PATCH_HEADER,
     "- id: sandbox-policy",
@@ -526,6 +538,7 @@ function profilePatchBody(workspaceRoot) {
     "      danger-full-access:",
     "        sandbox: danger-full-access",
     "        approval: never",
+    ...mcpLines(mcp),
     ""
   ].join("\n");
 }
@@ -535,7 +548,7 @@ var PLATFORM_ACCOUNT_PREFIX = "deepseek-account-platform/";
 var RUN_PROFILE = "run";
 var HEADLESS_BUNDLE = "@deepseek-ai/dsh-headless";
 var WEB_APP_BUNDLE = "@deepseek-ai/dsh-web-app";
-function runProfilePatchBody(workspaceRoot) {
+function runProfilePatchBody(workspaceRoot, mcp) {
   return [
     "# \u6C99\u7BB1 headless \u8FD0\u884C\u5C42",
     "- id: credentials",
@@ -561,63 +574,16 @@ function runProfilePatchBody(workspaceRoot) {
     "      danger-full-access:",
     "        sandbox: danger-full-access",
     "        approval: never",
+    ...mcpLines(mcp),
     ""
   ].join("\n");
 }
 var BOOT_ARGS = ["--profile", "sbx", "--port", "0", "--no-open"];
 var DUMP_CONFIG_ARGS = ["--profile", "sbx", "--dump-config"];
 
-// src/components/sandbox-manager/install.ts
-async function resolveSource(pkg, workspaceDir) {
-  const short = pkg.split("/").pop() ?? pkg;
-  const roots = [workspaceDir, process.cwd()].filter((item) => Boolean(item));
-  for (const root of roots) {
-    const candidates = [
-      path3.join(root, "node_modules", ...pkg.split("/")),
-      path3.join(root, short),
-      path3.join(root, "packages", short)
-    ];
-    for (const dir of candidates) {
-      const text = await fsp4.readFile(path3.join(dir, "package.json"), "utf8").catch(() => void 0);
-      if (!text) continue;
-      try {
-        if (JSON.parse(text).name === pkg) return dir;
-      } catch {
-      }
-    }
-  }
-  throw new SandboxError(
-    `\u627E\u4E0D\u5230 ${pkg} \u7684\u6E90\u7801\u76EE\u5F55\uFF08\u5728\u5DE5\u4F5C\u76EE\u5F55\u4E0E\u5BBF\u4E3B cwd \u4E0B\u7684 node_modules\u3001\u5305\u540D\u76EE\u5F55\u3001packages/ \u91CC\u90FD\u6CA1\u6709\uFF09`,
-    "package-not-found"
-  );
-}
-async function installPackage(ctx, input) {
-  const name = (input.package ?? "").trim();
-  if (!PACKAGE_NAME.test(name)) throw new SandboxError(`\u5305\u540D\u4E0D\u5408\u6CD5\uFF1A${name}`, "invalid-package-name");
-  const record = await requireRecord(ctx, input.id);
-  const source = await resolveSource(name, ctx.workspaceDir ? await ctx.workspaceDir() : void 0);
-  const profileDir = path3.join(record.home, "profiles", record.profile);
-  const link = insidePath(profileDir, path3.join(profileDir, PROFILE_NODE_MODULES, ...name.split("/")));
-  await fsp4.mkdir(path3.dirname(link), { recursive: true });
-  await fsp4.rm(link, { recursive: true, force: true });
-  await fsp4.symlink(source, link, "junction");
-  const packageFile = path3.join(profileDir, "package.json");
-  const manifest = JSON.parse(await fsp4.readFile(packageFile, "utf8"));
-  const bundles = manifest.dsh?.profile?.bundles ?? [];
-  if (!bundles.includes(name)) bundles.push(name);
-  manifest.dsh = { ...manifest.dsh ?? {}, profile: { ...manifest.dsh?.profile ?? {}, bundles } };
-  await fsp4.writeFile(packageFile, `${JSON.stringify(manifest, null, 2)}
-`);
-  await ctx.state.update((state) => {
-    const target = state.sandboxes.find((item) => item.id === record.id);
-    if (target) target.bundles = bundles;
-  });
-  return { package: name, source, bundles, requiresReload: true };
-}
-
 // src/components/sandbox-manager/lifecycle.ts
-import fsp6 from "node:fs/promises";
-import path5 from "node:path";
+import fsp5 from "node:fs/promises";
+import path4 from "node:path";
 
 // src/components/sandbox-manager/boot.ts
 import fs4 from "node:fs";
@@ -678,8 +644,8 @@ function tail(text) {
 }
 
 // src/components/sandbox-manager/profile.ts
-import fsp5 from "node:fs/promises";
-import path4 from "node:path";
+import fsp4 from "node:fs/promises";
+import path3 from "node:path";
 function profilePackageJson(bundles) {
   const useBundles = bundles.length ? bundles : DEFAULT_BUNDLES;
   return `${JSON.stringify({
@@ -697,26 +663,26 @@ function resolveBundles(bundles) {
   }
   return [...bundles];
 }
-async function writeProfile(paths, bundles) {
-  await fsp5.mkdir(paths.profileDir, { recursive: true });
-  await fsp5.mkdir(paths.workspace, { recursive: true });
-  await fsp5.mkdir(paths.agentsHome, { recursive: true });
-  await fsp5.writeFile(path4.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
-  await fsp5.writeFile(path4.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace));
+async function writeProfile(paths, bundles, mcp) {
+  await fsp4.mkdir(paths.profileDir, { recursive: true });
+  await fsp4.mkdir(paths.workspace, { recursive: true });
+  await fsp4.mkdir(paths.agentsHome, { recursive: true });
+  await fsp4.writeFile(path3.join(paths.profileDir, "package.json"), profilePackageJson(bundles));
+  await fsp4.writeFile(path3.join(paths.profileDir, "cordis.patch.yml"), profilePatchBody(paths.workspace, mcp));
 }
 async function writeEnvFile(paths, apiKey) {
   if (!apiKey) return;
-  await fsp5.writeFile(path4.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
+  await fsp4.writeFile(path3.join(paths.home, ENV_FILE), `${API_KEY_ENV}=${apiKey}
 `);
 }
 async function writeInheritedCredentials(paths) {
-  const source = path4.join(workHome(), CREDENTIALS_FILE);
-  const text = await fsp5.readFile(source, "utf8").catch(() => void 0);
+  const source = path3.join(workHome(), CREDENTIALS_FILE);
+  const text = await fsp4.readFile(source, "utf8").catch(() => void 0);
   if (!text) return "skipped";
   const filtered = stripCredentialRecord(text, BROWSER_SESSION_RECORD);
   if (filtered.includes(BROWSER_SESSION_RECORD)) return "skipped";
   if (!filtered.includes("records:") || !filtered.includes(PLATFORM_ACCOUNT_PREFIX)) return "skipped";
-  await fsp5.writeFile(path4.join(paths.home, CREDENTIALS_FILE), filtered);
+  await fsp4.writeFile(path3.join(paths.home, CREDENTIALS_FILE), filtered);
   return "inherited";
 }
 function stripCredentialRecord(text, key) {
@@ -735,41 +701,41 @@ function stripCredentialRecord(text, key) {
   return out.join("\n");
 }
 async function writeCredentialEnv(paths) {
-  const envFile = path4.join(paths.home, ENV_FILE);
-  const exists = await fsp5.access(envFile).then(() => true).catch(() => false);
+  const envFile = path3.join(paths.home, ENV_FILE);
+  const exists = await fsp4.access(envFile).then(() => true).catch(() => false);
   if (exists) return;
-  const text = await fsp5.readFile(path4.join(paths.home, CREDENTIALS_FILE), "utf8").catch(() => void 0);
+  const text = await fsp4.readFile(path3.join(paths.home, CREDENTIALS_FILE), "utf8").catch(() => void 0);
   if (!text) return;
   const key = /DEEPSEEK_API_KEY:\s*["']?([^"'\s]+)["']?/.exec(text)?.[1];
   if (!key) return;
-  await fsp5.writeFile(envFile, `${API_KEY_ENV}=${key}
+  await fsp4.writeFile(envFile, `${API_KEY_ENV}=${key}
 `);
 }
 async function ensureModuleResolution(paths) {
-  const target = path4.join(paths.home, "profiles", PROFILE_NODE_MODULES);
-  const shared = path4.join(workHome(), "profiles", PROFILE_NODE_MODULES);
-  const available = await fsp5.access(shared).then(() => true).catch(() => false);
+  const target = path3.join(paths.home, "profiles", PROFILE_NODE_MODULES);
+  const shared = path3.join(workHome(), "profiles", PROFILE_NODE_MODULES);
+  const available = await fsp4.access(shared).then(() => true).catch(() => false);
   if (!available) return;
-  const existing = await fsp5.lstat(target).catch(() => void 0);
-  if (existing?.isSymbolicLink()) await fsp5.unlink(target).catch(() => void 0);
-  await fsp5.mkdir(target, { recursive: true });
+  const existing = await fsp4.lstat(target).catch(() => void 0);
+  if (existing?.isSymbolicLink()) await fsp4.unlink(target).catch(() => void 0);
+  await fsp4.mkdir(target, { recursive: true });
   const link = async (from, to) => {
-    const exists = await fsp5.access(to).then(() => true).catch(() => false);
+    const exists = await fsp4.access(to).then(() => true).catch(() => false);
     if (exists) return;
-    await fsp5.symlink(from, to, "junction").catch(() => void 0);
+    await fsp4.symlink(from, to, "junction").catch(() => void 0);
   };
-  const entries = await fsp5.readdir(shared, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp4.readdir(shared, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
-    const from = path4.join(shared, entry.name);
-    const to = path4.join(target, entry.name);
+    const from = path3.join(shared, entry.name);
+    const to = path3.join(target, entry.name);
     if (!entry.name.startsWith("@")) {
       await link(from, to);
       continue;
     }
-    await fsp5.mkdir(to, { recursive: true });
-    const inner = await fsp5.readdir(from, { withFileTypes: true }).catch(() => []);
+    await fsp4.mkdir(to, { recursive: true });
+    const inner = await fsp4.readdir(from, { withFileTypes: true }).catch(() => []);
     for (const pkg of inner) {
-      await link(path4.join(from, pkg.name), path4.join(to, pkg.name));
+      await link(path3.join(from, pkg.name), path3.join(to, pkg.name));
     }
   }
 }
@@ -779,15 +745,15 @@ function newInstanceId() {
   return `${INSTANCE_ID_PREFIX}${Math.random().toString(16).slice(2, 2 + INSTANCE_ID_LENGTH)}`;
 }
 function instancePaths(root, id) {
-  const dir = insidePath(root, path5.join(root, id));
-  const home = path5.join(dir, HOME_DIR);
+  const dir = insidePath(root, path4.join(root, id));
+  const home = path4.join(dir, HOME_DIR);
   return {
     dir,
     home,
-    workspace: path5.join(dir, WORKSPACE_DIR),
-    profileDir: path5.join(home, PROFILE_DIR, SANDBOX_PROFILE),
-    logFile: path5.join(dir, LOG_FILE),
-    agentsHome: path5.join(dir, PROFILE_AGENTS_DIR)
+    workspace: path4.join(dir, WORKSPACE_DIR),
+    profileDir: path4.join(home, PROFILE_DIR, SANDBOX_PROFILE),
+    logFile: path4.join(dir, LOG_FILE),
+    agentsHome: path4.join(dir, PROFILE_AGENTS_DIR)
   };
 }
 async function createSandbox(ctx, input) {
@@ -802,7 +768,7 @@ async function createSandbox(ctx, input) {
     if (credentials === "inherited") await writeCredentialEnv(paths);
     await ensureModuleResolution(paths);
     const booted = await boot(paths, env);
-    await fsp6.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}
+    await fsp5.appendFile(paths.logFile, `[sandbox] credentials: ${credentials}
 `).catch((error) => console.error("[sandbox] \u5199 credentials \u89C2\u6D4B\u884C\u5931\u8D25", error));
     const record = {
       id,
@@ -823,9 +789,9 @@ async function createSandbox(ctx, input) {
     });
     return record;
   } catch (error) {
-    const log = await fsp6.readFile(paths.logFile, "utf8").catch(() => "");
+    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
     await sleep(600);
-    await fsp6.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
+    await fsp5.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
     if (!log.trim()) throw error;
     throw new SandboxError(`${asMessage(error)}
 --- boot.log ---
@@ -881,7 +847,7 @@ async function startSandbox(ctx, input) {
     }
     return { started: record.id, port: booted.port, token: booted.token, pid, ready: booted.ready };
   } catch (error) {
-    const log = await fsp6.readFile(paths.logFile, "utf8").catch(() => "");
+    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
     throw new SandboxError(
       `${asMessage(error)}
 --- boot.log ---
@@ -903,12 +869,12 @@ async function destroySandbox(ctx, input) {
   killTree(record.pid);
   const deadline = Date.now() + PORT_RELEASE_TIMEOUT_MS;
   while (Date.now() < deadline && await portOpen(record.port)) await sleep(250);
-  const trash = insidePath(ctx.root, path5.join(ctx.root, `${TRASH_PREFIX}${path5.basename(record.home)}-${Date.now()}`));
-  const instanceDir = path5.dirname(record.home);
-  const exists = await fsp6.access(instanceDir).then(() => true).catch(() => false);
+  const trash = insidePath(ctx.root, path4.join(ctx.root, `${TRASH_PREFIX}${path4.basename(record.home)}-${Date.now()}`));
+  const instanceDir = path4.dirname(record.home);
+  const exists = await fsp5.access(instanceDir).then(() => true).catch(() => false);
   if (exists) {
-    await fsp6.rename(instanceDir, trash).catch(() => void 0);
-    await fsp6.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
+    await fsp5.rename(instanceDir, trash).catch(() => void 0);
+    await fsp5.rm(trash, { recursive: true, force: true, maxRetries: 5 }).catch(() => void 0);
   }
   await ctx.state.update((next) => {
     next.sandboxes = next.sandboxes.filter((item) => item.id !== record.id);
@@ -916,28 +882,162 @@ async function destroySandbox(ctx, input) {
   return { destroyed: record.id, portClosed: !await portOpen(record.port) };
 }
 
-// src/components/sandbox-manager/prompt.ts
-import path7 from "node:path";
+// src/components/sandbox-manager/extras.ts
+var SKILL_NAME = /^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/;
+var FIND_SKILL_DIR_BUDGET = 5e3;
+async function findSkill(name, root, depth = 0, budget = { left: FIND_SKILL_DIR_BUDGET }) {
+  if (depth > 4 || budget.left <= 0) return void 0;
+  budget.left -= 1;
+  for (const candidate of [path5.join(root, "skills", name), path5.join(root, name)]) {
+    const hit = await fsp6.readFile(path5.join(candidate, "SKILL.md"), "utf8").catch(() => void 0);
+    if (hit !== void 0) return candidate;
+  }
+  const entries = await fsp6.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === "node_modules" || entry.name === ".git" || entry.name.startsWith(".")) continue;
+    const found = await findSkill(name, path5.join(root, entry.name), depth + 1, budget);
+    if (found) return found;
+  }
+  if (budget.left <= 0) {
+    throw new SandboxError(
+      `\u5728\u5DE5\u4F5C\u76EE\u5F55\u91CC\u67E5\u627E skill \u65F6\u626B\u4E86 ${FIND_SKILL_DIR_BUDGET} \u4E2A\u76EE\u5F55\u4ECD\u672A\u627E\u5230\uFF0C\u5DF2\u505C\u6B62\uFF08\u5DE5\u4F5C\u533A\u592A\u5927\uFF09`,
+      "skill-search-exhausted"
+    );
+  }
+  return void 0;
+}
+async function resolveSkillSource(name, workspaceDir) {
+  const roots = [workspaceDir, process.cwd()].filter((item) => Boolean(item));
+  for (const root of roots) {
+    const found = await findSkill(name, root);
+    if (found) return found;
+  }
+  throw new SandboxError(
+    `\u627E\u4E0D\u5230 skill\u300C${name}\u300D\uFF08\u5728\u5DE5\u4F5C\u76EE\u5F55\u4E0E\u5BBF\u4E3B cwd \u4E0B\u6309 <\u4EFB\u610F>/skills/${name} \u6216 <\u4EFB\u610F>/${name} \u627E SKILL.md \u90FD\u6CA1\u6709\uFF09`,
+    "skill-not-found"
+  );
+}
+async function addSkill(ctx, input) {
+  const name = (input.name ?? "").trim();
+  if (!SKILL_NAME.test(name)) throw new SandboxError(`skill \u540D\u4E0D\u5408\u6CD5\uFF1A${name}`, "invalid-skill-name");
+  const record = await requireRecord(ctx, input.id);
+  const source = await resolveSkillSource(name, ctx.workspaceDir ? await ctx.workspaceDir() : void 0);
+  const skillsRoot = path5.join(record.home, "skills");
+  await fsp6.mkdir(skillsRoot, { recursive: true });
+  const target = insidePath(skillsRoot, path5.join(skillsRoot, name));
+  if (target === skillsRoot || path5.dirname(target) !== skillsRoot) {
+    throw new SandboxError(`skill \u540D\u4E0D\u5408\u6CD5\uFF1A${name}`, "invalid-skill-name");
+  }
+  const existing = await fsp6.lstat(target).catch(() => void 0);
+  if (existing) await fsp6.rm(target, { recursive: true, force: true });
+  await fsp6.symlink(source, target, "junction");
+  return { name, source, requiresRestart: false };
+}
+async function writePatches(ctx, id, workspace, mcp) {
+  const paths = instancePaths(ctx.root, id);
+  const webProfile = path5.join(paths.home, PROFILE_DIR, SANDBOX_PROFILE);
+  await fsp6.mkdir(webProfile, { recursive: true });
+  await fsp6.writeFile(path5.join(webProfile, "cordis.patch.yml"), profilePatchBody(workspace, mcp));
+  const runProfile = path5.join(paths.home, PROFILE_DIR, RUN_PROFILE);
+  await fsp6.mkdir(runProfile, { recursive: true });
+  await fsp6.writeFile(path5.join(runProfile, "cordis.patch.yml"), runProfilePatchBody(workspace, mcp));
+}
+async function addMcp(ctx, input) {
+  const serverName = (input.serverName ?? "").trim();
+  if (!SERVER_NAME.test(serverName)) {
+    throw new SandboxError(`serverName \u4E0D\u5408\u6CD5\uFF1A${serverName}\uFF08\u53EA\u5141\u8BB8\u5B57\u6BCD\u6570\u5B57\u3001\u4E0B\u5212\u7EBF\u3001\u8FDE\u5B57\u7B26\uFF0C1\u201332 \u4F4D\uFF09`, "invalid-server-name");
+  }
+  if (typeof input.config !== "object" || input.config === null || Array.isArray(input.config)) {
+    throw new SandboxError("config \u5FC5\u987B\u662F\u4E00\u4E2A\u5BF9\u8C61", "invalid-mcp-config");
+  }
+  const record = await requireRecord(ctx, input.id);
+  const config = { ...input.config, serverName };
+  const next = [
+    ...(record.mcp ?? []).filter((entry) => entry.serverName !== serverName),
+    { serverName, config }
+  ];
+  await ctx.state.update((state) => {
+    const target = state.sandboxes.find((item) => item.id === record.id);
+    if (target) target.mcp = next;
+  });
+  await writePatches(ctx, record.id, record.workspace, next);
+  return { servers: next.map((entry) => entry.serverName), requiresRestart: true };
+}
 
-// src/components/sandbox-manager/runProfile.ts
+// src/components/sandbox-manager/install.ts
 import fsp7 from "node:fs/promises";
 import path6 from "node:path";
-async function ensureRunProfile(paths, bundles) {
-  const dir = path6.join(paths.home, "profiles", RUN_PROFILE);
-  await fsp7.mkdir(dir, { recursive: true });
+async function resolveSource(pkg, workspaceDir) {
+  const short = pkg.split("/").pop() ?? pkg;
+  const roots = [workspaceDir, process.cwd()].filter((item) => Boolean(item));
+  for (const root of roots) {
+    const candidates = [
+      path6.join(root, "node_modules", ...pkg.split("/")),
+      path6.join(root, short),
+      path6.join(root, "packages", short)
+    ];
+    for (const dir of candidates) {
+      const text = await fsp7.readFile(path6.join(dir, "package.json"), "utf8").catch(() => void 0);
+      if (!text) continue;
+      try {
+        if (JSON.parse(text).name === pkg) return dir;
+      } catch {
+      }
+    }
+  }
+  throw new SandboxError(
+    `\u627E\u4E0D\u5230 ${pkg} \u7684\u6E90\u7801\u76EE\u5F55\uFF08\u5728\u5DE5\u4F5C\u76EE\u5F55\u4E0E\u5BBF\u4E3B cwd \u4E0B\u7684 node_modules\u3001\u5305\u540D\u76EE\u5F55\u3001packages/ \u91CC\u90FD\u6CA1\u6709\uFF09`,
+    "package-not-found"
+  );
+}
+async function installPackage(ctx, input) {
+  const name = (input.package ?? "").trim();
+  if (!PACKAGE_NAME.test(name)) throw new SandboxError(`\u5305\u540D\u4E0D\u5408\u6CD5\uFF1A${name}`, "invalid-package-name");
+  const record = await requireRecord(ctx, input.id);
+  const source = await resolveSource(name, ctx.workspaceDir ? await ctx.workspaceDir() : void 0);
+  const profileDir = path6.join(record.home, "profiles", record.profile);
+  const link = insidePath(profileDir, path6.join(profileDir, PROFILE_NODE_MODULES, ...name.split("/")));
+  await fsp7.mkdir(path6.dirname(link), { recursive: true });
+  await fsp7.rm(link, { recursive: true, force: true });
+  await fsp7.symlink(source, link, "junction");
+  const packageFile = path6.join(profileDir, "package.json");
+  const manifest = JSON.parse(await fsp7.readFile(packageFile, "utf8"));
+  const bundles = manifest.dsh?.profile?.bundles ?? [];
+  if (!bundles.includes(name)) bundles.push(name);
+  manifest.dsh = { ...manifest.dsh ?? {}, profile: { ...manifest.dsh?.profile ?? {}, bundles } };
+  await fsp7.writeFile(packageFile, `${JSON.stringify(manifest, null, 2)}
+`);
+  await ctx.state.update((state) => {
+    const target = state.sandboxes.find((item) => item.id === record.id);
+    if (target) target.bundles = bundles;
+  });
+  return { package: name, source, bundles, requiresReload: true };
+}
+
+// src/components/sandbox-manager/prompt.ts
+import path8 from "node:path";
+
+// src/components/sandbox-manager/runProfile.ts
+import fsp8 from "node:fs/promises";
+import path7 from "node:path";
+async function ensureRunProfile(paths, bundles, mcp) {
+  const dir = path7.join(paths.home, "profiles", RUN_PROFILE);
+  await fsp8.mkdir(dir, { recursive: true });
   const plugins = bundles.filter((item) => item !== WEB_APP_BUNDLE);
   const list = [.../* @__PURE__ */ new Set(["@deepseek-ai/dsh-base", HEADLESS_BUNDLE, ...plugins])];
-  await fsp7.writeFile(
-    path6.join(dir, "package.json"),
+  await fsp8.writeFile(
+    path7.join(dir, "package.json"),
     `${JSON.stringify({ name: `dsh-profile-${RUN_PROFILE}`, private: true, dsh: { profile: { bundles: list } } }, null, 2)}
 `
   );
-  await fsp7.writeFile(path6.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace));
-  const link = path6.join(dir, "node_modules");
-  const shared = path6.join(paths.home, "profiles", SANDBOX_PROFILE, "node_modules");
-  const linked = await fsp7.access(link).then(() => true).catch(() => false);
-  const available = await fsp7.access(shared).then(() => true).catch(() => false);
-  if (!linked && available) await fsp7.symlink(shared, link, "junction").catch(() => void 0);
+  await fsp8.writeFile(path7.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace, mcp));
+  const link = path7.join(dir, "node_modules");
+  const shared = path7.join(paths.home, "profiles", SANDBOX_PROFILE, "node_modules");
+  const linked = await fsp8.access(link).then(() => true).catch(() => false);
+  const available = await fsp8.access(shared).then(() => true).catch(() => false);
+  if (!linked && available) await fsp8.symlink(shared, link, "junction").catch(() => void 0);
 }
 
 // src/components/sandbox-manager/prompt.ts
@@ -946,7 +1046,7 @@ async function promptSandbox(ctx, input) {
   const text = input.text.trim();
   if (!text) throw new SandboxError("\u6D88\u606F\u5185\u5BB9\u4E3A\u7A7A", "empty-prompt");
   const paths = instancePaths(ctx.root, record.id);
-  await ensureRunProfile(paths, record.bundles);
+  await ensureRunProfile(paths, record.bundles, record.mcp);
   await writeCredentialEnv(paths);
   const session = input.session?.trim();
   const args = ["--profile", RUN_PROFILE];
@@ -966,7 +1066,7 @@ async function promptSandbox(ctx, input) {
     throw new SandboxError(`\u6C99\u7BB1\u5BF9\u8BDD\u5931\u8D25\uFF1A${detail || "\u6CA1\u6709\u8F93\u51FA"}`, "prompt-failed");
   }
   return {
-    session: latest ? path7.basename(path7.dirname(latest)) : "",
+    session: latest ? path8.basename(path8.dirname(latest)) : "",
     assistant,
     tools,
     reason: result.code === 0 ? "idle" : "timeout",
@@ -975,8 +1075,8 @@ async function promptSandbox(ctx, input) {
 }
 
 // src/components/sandbox-manager/status.ts
-import fsp8 from "node:fs/promises";
-import path8 from "node:path";
+import fsp9 from "node:fs/promises";
+import path9 from "node:path";
 var ERROR_LINE = /error|failed|cannot resolve|EADDRINUSE/i;
 async function clientEntries(port) {
   const controller = new AbortController();
@@ -1010,11 +1110,11 @@ async function readStatus(ctx, id) {
   const listening = up ? await portOpen(record.port) : false;
   let log = "";
   try {
-    log = await fsp8.readFile(record.logFile, "utf8");
+    log = await fsp9.readFile(record.logFile, "utf8");
   } catch {
     log = "";
   }
-  const patch = await fsp8.readFile(path8.join(record.home, "profiles", record.profile, "cordis.patch.yml"), "utf8").catch(() => "");
+  const patch = await fsp9.readFile(path9.join(record.home, "profiles", record.profile, "cordis.patch.yml"), "utf8").catch(() => "");
   const policy = /mode:\s*(\S+)/.exec(patch)?.[1] ?? "unknown";
   const errors = log.split("\n").filter((line) => ERROR_LINE.test(line)).slice(-5).map((line) => line.trim().slice(0, 240));
   return {
@@ -1032,20 +1132,20 @@ async function readStatus(ctx, id) {
 }
 
 // src/components/sandbox-manager/reconfigure.ts
-import path9 from "node:path";
+import path10 from "node:path";
 async function reconfigureSandbox(ctx, input) {
   const record = await requireRecord(ctx, input.id);
-  const profileDir = path9.join(record.home, "profiles", record.profile);
-  const packageFile = path9.join(profileDir, "package.json");
+  const profileDir = path10.join(record.home, "profiles", record.profile);
+  const packageFile = path10.join(profileDir, "package.json");
   const bundles = input.bundles && input.bundles.length ? resolveBundles(input.bundles) : record.bundles;
-  await import("node:fs/promises").then((fsp9) => fsp9.writeFile(packageFile, profilePackageJson(bundles)));
+  await import("node:fs/promises").then((fsp10) => fsp10.writeFile(packageFile, profilePackageJson(bundles)));
   const check = await runCommand([...DUMP_CONFIG_ARGS], {
     cwd: record.workspace,
-    env: sandboxEnv(record.home, path9.join(path9.dirname(record.home), "agents")),
+    env: sandboxEnv(record.home, path10.join(path10.dirname(record.home), "agents")),
     stdio: ["ignore", "pipe", "pipe"]
   }, COMMAND_TIMEOUT_MS);
   if (check.code !== 0) {
-    await import("node:fs/promises").then((fsp9) => fsp9.writeFile(packageFile, profilePackageJson(record.bundles)));
+    await import("node:fs/promises").then((fsp10) => fsp10.writeFile(packageFile, profilePackageJson(record.bundles)));
     const detail = (check.err || check.out).trim().split("\n").slice(-4).join(" | ");
     return { ok: false, stage: "dump-config", detail };
   }
@@ -1062,14 +1162,16 @@ async function reconfigureSandbox(ctx, input) {
 }
 
 // src/components/sandbox-manager/manager.ts
-import path10 from "node:path";
+import path11 from "node:path";
 function createManager(root = resolveRoot(), workspaceDir) {
-  const ctx = { root, state: new StateStore(path10.join(root, STATE_FILE)), workspaceDir };
+  const ctx = { root, state: new StateStore(path11.join(root, STATE_FILE)), workspaceDir };
   return {
     root,
     create: (input) => createSandbox(ctx, input),
     list: () => listSandboxes(ctx),
     install: (input) => installPackage(ctx, input),
+    addSkill: (input) => addSkill(ctx, input),
+    addMcp: (input) => addMcp(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),
@@ -1119,6 +1221,18 @@ async function dispatch(manager, method, route, query, body) {
       bundles: asBundles(payload.bundles),
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : void 0
     }) };
+  }
+  if (route === "skill" && method === "POST") {
+    const payload = await body();
+    return manager.addSkill({ id: asId(payload), name: String(payload.name ?? "") });
+  }
+  if (route === "mcp" && method === "POST") {
+    const payload = await body();
+    return manager.addMcp({
+      id: asId(payload),
+      serverName: String(payload.serverName ?? ""),
+      config: typeof payload.config === "object" && payload.config ? payload.config : {}
+    });
   }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
@@ -1228,6 +1342,39 @@ function registerSandboxTools(tools, manager) {
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     execute: async (args) => manager.tail(args)
+  });
+  tools.register({
+    name: "sandbox_add_skill",
+    description: "Link a local skill directory into a sandbox: the skill is looked up as `skills/<name>/SKILL.md` or `<name>/SKILL.md` under the current session's working directory (then the host cwd), and linked into the sandbox's own skill root so only that instance sees it. Both the web profile and the headless run profile read the same home, so sandbox_prompt sees it too. No restart needed \u2014 skills are read from disk.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        name: { type: "string", description: "Skill directory name." }
+      },
+      required: ["id", "name"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.addSkill(args)
+  });
+  tools.register({
+    name: "sandbox_add_mcp",
+    description: "Configure an MCP server for a sandbox. `config` is passed through to one @deepseek-ai/dsh-mcp-client row in the sandbox's profile patch: either `{ transport: 'stdio', command, args?, env?, cwd? }` or `{ transport: 'streamable-http', url, headers? }`; `serverName` is added for you. The row lands in both the web profile and the headless run profile. Call sandbox_restart afterwards \u2014 profiles are composed at process start.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        serverName: { type: "string", description: "Namespace for this server, 1-32 chars of [A-Za-z0-9_-]." },
+        config: { type: "object", description: "dsh-mcp-client config object; serverName is injected." }
+      },
+      required: ["id", "serverName", "config"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.addMcp(args)
   });
   tools.register({
     name: "sandbox_stop",

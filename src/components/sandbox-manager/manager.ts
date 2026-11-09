@@ -2,6 +2,10 @@ import { resolveRoot } from "../../shared/paths.ts";
 import { STATE_FILE } from "../../shared/config.ts";
 import { StateStore } from "../../shared/state.ts";
 import type {
+  AddMcpInput,
+  AddMcpResult,
+  AddSkillInput,
+  AddSkillResult,
   CreateSandboxInput,
   DestroyInput,
   DestroyResult,
@@ -23,6 +27,7 @@ import type {
   TailResult,
 } from "../../shared/types.ts";
 import { readLog, listSandboxes, readTail } from "./inspect.ts";
+import { addMcp, addSkill } from "./extras.ts";
 import { installPackage } from "./install.ts";
 import { createSandbox, destroySandbox, restartSandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
 import { promptSandbox } from "./prompt.ts";
@@ -36,6 +41,8 @@ export interface SandboxManager {
   create(input: CreateSandboxInput): Promise<SandboxRecord>;
   list(): Promise<SandboxView[]>;
   install(input: InstallInput): Promise<InstallResult>;
+  addSkill(input: AddSkillInput): Promise<AddSkillResult>;
+  addMcp(input: AddMcpInput): Promise<AddMcpResult>;
   prompt(input: PromptInput): Promise<PromptResult>;
   status(id: string): Promise<StatusResult>;
   stop(input: LifecycleInput): Promise<StopResult>;
@@ -58,6 +65,8 @@ export function createManager(
     create: (input) => createSandbox(ctx, input),
     list: () => listSandboxes(ctx),
     install: (input) => installPackage(ctx, input),
+    addSkill: (input) => addSkill(ctx, input),
+    addMcp: (input) => addMcp(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),

@@ -44,6 +44,8 @@ dsh plugin --profile <profile> remove dsh-dev-sandbox
 - 沙箱 profile 的 `node_modules` 里官方包是**逐个链接**过去的（不是整个目录链接），往沙箱里装包不会写进工作环境的依赖树。
 - 模型凭据继承工作环境：创建时复制 `.credentials.yaml`，但剥掉 GUI 会话记录，沙箱启动时自己生成新的 browser-session。沙箱因此能直接调模型，而两边的浏览器登录态互不相通。凭据是创建那一刻的快照，工作环境刷新 token 后重建沙箱即可。
 - 那份凭据是**同权限的明文副本**：它一直躺在沙箱 home 里直到实例被销毁，沙箱内任何进程都能读它。读不到源文件或格式变化时整份不继承，沙箱的 `boot.log` 里能 grep 到 `credentials: skipped`；写不进沙箱 home 时创建直接失败，不会留一个半配置的实例。
+- **给沙箱配的 MCP server，其配置（含 command 参数、env 里的密钥、HTTP headers）以明文写在沙箱 profile 的补丁里**，和凭据同类的暴露面：谁读到沙箱 home 就都读得到。MCP server 进程本身也在沙箱里跑，受同一份 workspace-write 约束。
+- 配错一个 MCP server 只影响它自己：`dsh-mcp-client` 的 `failOnStartupError` 默认不阻断激活，沙箱其余部分照常起来。要看它到底连上没有，看实例 `boot.log` 里那一行。
 - 浏览器侧互不串：cookie 名与签名 audience 绑定 hostname 和端口，工作页面的登录态不会被带过去。
 
 没做到的：
@@ -76,6 +78,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | --- | --- | --- |
 | `GET` | `/list` | 列出实例与状态 |
 | `POST` | `/create` | `{ name?, bundles?, apiKey? }` |
+| `POST` | `/skill` | `{ id, name }`，把 skill 目录链进沙箱 |
+| `POST` | `/mcp` | `{ id, serverName, config }`，配一个 MCP server |
 | `POST` | `/stop` | `{ id }`，停进程、留数据 |
 | `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
 | `POST` | `/restart` | `{ id }`，停再起；装完插件必须走这一步 |
@@ -95,7 +99,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | --- | --- |
 | `sandbox_create` | 建实例，返回端口、token 与就绪状态 |
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
-| `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
+| `sandbox_add_skill` | 把工作区的 skill 目录链进沙箱自己的技能根 |
+| `sandbox_add_mcp` | 给沙箱配一个 MCP server（写进 profile 补丁的两套） || `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
 | `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |

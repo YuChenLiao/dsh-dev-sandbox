@@ -121,6 +121,51 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
   });
 
   tools.register({
+    name: "sandbox_add_skill",
+    description:
+      "Link a local skill directory into a sandbox: the skill is looked up as `skills/<name>/SKILL.md` "
+      + "or `<name>/SKILL.md` under the current session's working directory (then the host cwd), "
+      + "and linked into the sandbox's own skill root so only that instance sees it. "
+      + "Both the web profile and the headless run profile read the same home, so sandbox_prompt sees it too. "
+      + "No restart needed — skills are read from disk.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        name: { type: "string", description: "Skill directory name." },
+      },
+      required: ["id", "name"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.addSkill(args as { id: string; name: string }),
+  });
+
+  tools.register({
+    name: "sandbox_add_mcp",
+    description:
+      "Configure an MCP server for a sandbox. `config` is passed through to one @deepseek-ai/dsh-mcp-client row "
+      + "in the sandbox's profile patch: either `{ transport: 'stdio', command, args?, env?, cwd? }` "
+      + "or `{ transport: 'streamable-http', url, headers? }`; `serverName` is added for you. "
+      + "The row lands in both the web profile and the headless run profile. "
+      + "Call sandbox_restart afterwards — profiles are composed at process start.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        serverName: { type: "string", description: "Namespace for this server, 1-32 chars of [A-Za-z0-9_-]." },
+        config: { type: "object", description: "dsh-mcp-client config object; serverName is injected." },
+      },
+      required: ["id", "serverName", "config"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.addMcp(args as { id: string; serverName: string; config: Record<string, unknown> }),
+  });
+
+  tools.register({
     name: "sandbox_stop",
     description:
       "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, "

@@ -53,6 +53,18 @@ export async function dispatch(
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : undefined,
     } satisfies CreateSandboxInput) };
   }
+  if (route === "skill" && method === "POST") {
+    const payload = await body();
+    return manager.addSkill({ id: asId(payload), name: String(payload.name ?? "") });
+  }
+  if (route === "mcp" && method === "POST") {
+    const payload = await body();
+    return manager.addMcp({
+      id: asId(payload),
+      serverName: String(payload.serverName ?? ""),
+      config: (typeof payload.config === "object" && payload.config ? payload.config : {}) as Record<string, unknown>,
+    });
+  }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
   }

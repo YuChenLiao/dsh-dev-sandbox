@@ -1,5 +1,7 @@
 /** sandbox-manager 组件自己的常量；跨组件共享的常量在 shared/config.ts。 */
 
+import type { McpEntry } from "../../shared/types.ts";
+
 export const INSTANCE_ID_PREFIX = "sbx-";
 export const INSTANCE_ID_LENGTH = 6;
 
@@ -16,10 +18,27 @@ export const PROFILE_PATCH_HEADER = "# 沙箱 profile 层：本实例的约束�
 export const API_KEY_ENV = "DEEPSEEK_API_KEY";
 
 /**
+ * MCP server 行：每个 server 一行 `dsh-mcp-client` 实例。
+ * config 用 JSON 内联——YAML 的 flow mapping 语法接受 JSON 对象，省掉手写序列化。
+ */
+function mcpLines(mcp: readonly McpEntry[] | undefined): string[] {
+  const lines: string[] = [];
+  for (const entry of mcp ?? []) {
+    lines.push(
+      "- insert:",
+      `    - id: mcp-${entry.serverName}`,
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      `      config: ${JSON.stringify(entry.config)}`,
+    );
+  }
+  return lines;
+}
+
+/**
  * 沙箱 profile 的补丁：把 agent 的文件与 shell 钉在 workspace 里。
  * 不依赖 base 的默认值，避免哪天默认放宽后沙箱跟着放宽。
  */
-export function profilePatchBody(workspaceRoot: string): string {
+export function profilePatchBody(workspaceRoot: string, mcp?: readonly McpEntry[]): string {
   return [
     PROFILE_PATCH_HEADER,
     "- id: sandbox-policy",
@@ -41,6 +60,7 @@ export function profilePatchBody(workspaceRoot: string): string {
     "      danger-full-access:",
     "        sandbox: danger-full-access",
     "        approval: never",
+    ...mcpLines(mcp),
     "",
   ].join("\n");
 }
@@ -59,7 +79,7 @@ export const WEB_APP_BUNDLE = "@deepseek-ai/dsh-web-app";
  * headless profile 的补丁：恢复凭据三行（headless 默认关掉它们），
  * 再把 agent 的文件与 shell 钉在 workspace。
  */
-export function runProfilePatchBody(workspaceRoot: string): string {
+export function runProfilePatchBody(workspaceRoot: string, mcp?: readonly McpEntry[]): string {
   return [
     "# 沙箱 headless 运行层",
     "- id: credentials",
@@ -85,6 +105,7 @@ export function runProfilePatchBody(workspaceRoot: string): string {
     "      danger-full-access:",
     "        sandbox: danger-full-access",
     "        approval: never",
+    ...mcpLines(mcp),
     "",
   ].join("\n");
 }
