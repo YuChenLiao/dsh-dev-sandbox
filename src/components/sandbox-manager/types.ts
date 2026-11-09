@@ -14,6 +14,11 @@ export interface SandboxPaths {
 export interface ManagerContext {
   root: string;
   state: StateStore;
+  /**
+   * 当前会话的工作目录。插件源码从那里找，不能用 process.cwd()——宿主进程的 cwd
+   * 与用户项目目录无关，实测会导致 install 永远 package-not-found。
+   */
+  workspaceDir?: () => Promise<string | undefined>;
 }
 
 /**

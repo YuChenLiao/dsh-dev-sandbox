@@ -129,6 +129,9 @@ export async function startSandbox(ctx: ManagerContext, input: LifecycleInput): 
 
   const paths = instancePaths(ctx.root, record.id);
   const env = sandboxEnv(paths.home, paths.agentsHome);
+  // 官方包要在启动前补一遍：profile 的 node_modules 是创建时的快照，工作环境后来
+  // 新装的官方包不会自己出现。函数幂等且只增不减。
+  await ensureModuleResolution(paths);
 
   try {
     const booted = await boot(paths, env);
@@ -156,6 +159,16 @@ export async function startSandbox(ctx: ManagerContext, input: LifecycleInput): 
       true,
     );
   }
+}
+
+/**
+ * 重启：停掉再起来。装完插件必须走这一步，因为 profile 组合发生在进程启动时；
+ * 单开一个工具而不是让模型连调 stop + start，是为了省一次往返和一次可能的半状态。
+ */
+export async function restartSandbox(ctx: ManagerContext, input: LifecycleInput): Promise<StartResult> {
+  const record = await requireRecord(ctx, input.id);
+  if (record.pid) await stopSandbox(ctx, input);
+  return startSandbox(ctx, input);
 }
 
 /** 销毁：杀整棵进程树、等端口释放、先改名再删（Windows 上直接删会被占用挡住）。 */

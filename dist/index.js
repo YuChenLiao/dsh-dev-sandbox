@@ -568,29 +568,34 @@ var BOOT_ARGS = ["--profile", "sbx", "--port", "0", "--no-open"];
 var DUMP_CONFIG_ARGS = ["--profile", "sbx", "--dump-config"];
 
 // src/components/sandbox-manager/install.ts
-async function resolveSource(pkg) {
-  const cwd = process.cwd();
+async function resolveSource(pkg, workspaceDir) {
   const short = pkg.split("/").pop() ?? pkg;
-  const candidates = [
-    path3.join(cwd, "node_modules", ...pkg.split("/")),
-    path3.join(cwd, short),
-    path3.join(cwd, "packages", short)
-  ];
-  for (const dir of candidates) {
-    const text = await fsp4.readFile(path3.join(dir, "package.json"), "utf8").catch(() => void 0);
-    if (!text) continue;
-    try {
-      if (JSON.parse(text).name === pkg) return dir;
-    } catch {
+  const roots = [workspaceDir, process.cwd()].filter((item) => Boolean(item));
+  for (const root of roots) {
+    const candidates = [
+      path3.join(root, "node_modules", ...pkg.split("/")),
+      path3.join(root, short),
+      path3.join(root, "packages", short)
+    ];
+    for (const dir of candidates) {
+      const text = await fsp4.readFile(path3.join(dir, "package.json"), "utf8").catch(() => void 0);
+      if (!text) continue;
+      try {
+        if (JSON.parse(text).name === pkg) return dir;
+      } catch {
+      }
     }
   }
-  throw new SandboxError(`\u627E\u4E0D\u5230 ${pkg} \u7684\u6E90\u7801\u76EE\u5F55\uFF08\u8BD5\u8FC7\u5DE5\u4F5C\u533A\u7684 node_modules\u3001\u5305\u540D\u76EE\u5F55\u3001packages/\uFF09`, "package-not-found");
+  throw new SandboxError(
+    `\u627E\u4E0D\u5230 ${pkg} \u7684\u6E90\u7801\u76EE\u5F55\uFF08\u5728\u5DE5\u4F5C\u76EE\u5F55\u4E0E\u5BBF\u4E3B cwd \u4E0B\u7684 node_modules\u3001\u5305\u540D\u76EE\u5F55\u3001packages/ \u91CC\u90FD\u6CA1\u6709\uFF09`,
+    "package-not-found"
+  );
 }
 async function installPackage(ctx, input) {
   const name = (input.package ?? "").trim();
   if (!PACKAGE_NAME.test(name)) throw new SandboxError(`\u5305\u540D\u4E0D\u5408\u6CD5\uFF1A${name}`, "invalid-package-name");
   const record = await requireRecord(ctx, input.id);
-  const source = await resolveSource(name);
+  const source = await resolveSource(name, ctx.workspaceDir ? await ctx.workspaceDir() : void 0);
   const profileDir = path3.join(record.home, "profiles", record.profile);
   const link = insidePath(profileDir, path3.join(profileDir, PROFILE_NODE_MODULES, ...name.split("/")));
   await fsp4.mkdir(path3.dirname(link), { recursive: true });
@@ -741,13 +746,32 @@ async function writeCredentialEnv(paths) {
 `);
 }
 async function ensureModuleResolution(paths) {
-  const link = path4.join(paths.home, "profiles", PROFILE_NODE_MODULES);
+  const target = path4.join(paths.home, "profiles", PROFILE_NODE_MODULES);
   const shared = path4.join(workHome(), "profiles", PROFILE_NODE_MODULES);
-  const linked = await fsp5.access(link).then(() => true).catch(() => false);
-  if (linked) return;
   const available = await fsp5.access(shared).then(() => true).catch(() => false);
   if (!available) return;
-  await fsp5.symlink(shared, link, "junction").catch(() => void 0);
+  const existing = await fsp5.lstat(target).catch(() => void 0);
+  if (existing?.isSymbolicLink()) await fsp5.unlink(target).catch(() => void 0);
+  await fsp5.mkdir(target, { recursive: true });
+  const link = async (from, to) => {
+    const exists = await fsp5.access(to).then(() => true).catch(() => false);
+    if (exists) return;
+    await fsp5.symlink(from, to, "junction").catch(() => void 0);
+  };
+  const entries = await fsp5.readdir(shared, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const from = path4.join(shared, entry.name);
+    const to = path4.join(target, entry.name);
+    if (!entry.name.startsWith("@")) {
+      await link(from, to);
+      continue;
+    }
+    await fsp5.mkdir(to, { recursive: true });
+    const inner = await fsp5.readdir(from, { withFileTypes: true }).catch(() => []);
+    for (const pkg of inner) {
+      await link(path4.join(from, pkg.name), path4.join(to, pkg.name));
+    }
+  }
 }
 
 // src/components/sandbox-manager/lifecycle.ts
@@ -838,6 +862,7 @@ async function startSandbox(ctx, input) {
   }
   const paths = instancePaths(ctx.root, record.id);
   const env = sandboxEnv(paths.home, paths.agentsHome);
+  await ensureModuleResolution(paths);
   try {
     const booted = await boot(paths, env);
     const pid = booted.child.pid ?? 0;
@@ -865,6 +890,11 @@ ${log.trim().split("\n").slice(-40).join("\n")}`,
       true
     );
   }
+}
+async function restartSandbox(ctx, input) {
+  const record = await requireRecord(ctx, input.id);
+  if (record.pid) await stopSandbox(ctx, input);
+  return startSandbox(ctx, input);
 }
 async function destroySandbox(ctx, input) {
   const state = await ctx.state.read();
@@ -918,8 +948,12 @@ async function promptSandbox(ctx, input) {
   const paths = instancePaths(ctx.root, record.id);
   await ensureRunProfile(paths, record.bundles);
   await writeCredentialEnv(paths);
+  const session = input.session?.trim();
+  const args = ["--profile", RUN_PROFILE];
+  if (session) args.push("--session-id", session);
+  args.push(text);
   const result = await runCommand(
-    ["--profile", RUN_PROFILE, text],
+    args,
     { cwd: record.workspace, env: sandboxEnv(record.home, paths.agentsHome), stdio: ["ignore", "pipe", "pipe"] },
     input.timeoutMs ?? 18e4
   );
@@ -1029,8 +1063,8 @@ async function reconfigureSandbox(ctx, input) {
 
 // src/components/sandbox-manager/manager.ts
 import path10 from "node:path";
-function createManager(root = resolveRoot()) {
-  const ctx = { root, state: new StateStore(path10.join(root, STATE_FILE)) };
+function createManager(root = resolveRoot(), workspaceDir) {
+  const ctx = { root, state: new StateStore(path10.join(root, STATE_FILE)), workspaceDir };
   return {
     root,
     create: (input) => createSandbox(ctx, input),
@@ -1040,6 +1074,7 @@ function createManager(root = resolveRoot()) {
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),
     start: (input) => startSandbox(ctx, input),
+    restart: (input) => restartSandbox(ctx, input),
     destroy: (input) => destroySandbox(ctx, input),
     reconfigure: (input) => reconfigureSandbox(ctx, input),
     tail: (input) => readTail(ctx, input),
@@ -1091,6 +1126,9 @@ async function dispatch(manager, method, route, query, body) {
   if (route === "start" && method === "POST") {
     return manager.start({ id: asId(await body()) });
   }
+  if (route === "restart" && method === "POST") {
+    return manager.restart({ id: asId(await body()) });
+  }
   if (route === "destroy" && method === "POST") {
     return manager.destroy({ id: asId(await body()) });
   }
@@ -1129,7 +1167,7 @@ function registerSandboxTools(tools, manager) {
   });
   tools.register({
     name: "sandbox_install",
-    description: "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. The work profile and its node_modules are not touched. A running instance does not hot-load it: recreate the instance to load the plugin.",
+    description: "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. The package is looked up in the current session's working directory (then the host cwd): `node_modules/<name>`, `<name>/`, or `packages/<name>/`. A running instance does not hot-load it: call sandbox_restart afterwards.",
     parameters: {
       type: "object",
       properties: {
@@ -1145,12 +1183,13 @@ function registerSandboxTools(tools, manager) {
   });
   tools.register({
     name: "sandbox_prompt",
-    description: "Run one real conversation turn inside a sandbox and return the assistant text plus the tool names it called. This is how a dialogue-facing plugin gets verified. The turn runs on the sandbox's inherited model credentials, so each call costs one real request. For the full event stream of that turn \u2014 every tool call with its arguments and result \u2014 call sandbox_tail next.",
+    description: "Run one real conversation turn inside a sandbox and return the assistant text plus the tool names it called. This is how a dialogue-facing plugin gets verified. The turn runs on the sandbox's inherited model credentials, so each call costs one real request. Omit `session` to start a new conversation; pass the `session` value returned by the previous call to continue that same conversation \u2014 the sandbox model keeps its earlier context, which is how multi-turn behavior gets tested. For the full event stream of the turn \u2014 every tool call with its arguments and result \u2014 call sandbox_tail next.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string", description: "Sandbox instance id." },
         text: { type: "string", description: "Message to send." },
+        session: { type: "string", description: "Existing session id to continue. Omit for a new conversation." },
         timeoutMs: { type: "number", description: "How long to wait for the turn to settle." }
       },
       required: ["id", "text"],
@@ -1218,6 +1257,20 @@ function registerSandboxTools(tools, manager) {
     execute: async (args) => manager.start(args)
   });
   tools.register({
+    name: "sandbox_restart",
+    description: "Restart a sandbox: stop its process, then start it again from the same home. Required after sandbox_install \u2014 a profile is composed at process start, so a newly linked plugin does not appear until the instance restarts. The port may change.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 18e4,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.restart(args)
+  });
+  tools.register({
     name: "sandbox_destroy",
     description: "Destroy a sandbox: kill its process tree, wait for the port to close, delete its home directory.",
     parameters: {
@@ -1233,8 +1286,21 @@ function registerSandboxTools(tools, manager) {
 }
 
 // src/components/sandbox-manager/register.ts
+function workspaceResolver(ctx) {
+  return async () => {
+    try {
+      const agents = ctx.get("agents");
+      const workingDirectory = ctx.get("workingDirectory");
+      const agent = agents?.currentInitiator?.();
+      if (workingDirectory?.ensure && agent) return await workingDirectory.ensure(agent);
+      return workingDirectory?.defaultDirectory;
+    } catch {
+      return void 0;
+    }
+  };
+}
 function registerSandboxManager(ctx) {
-  const manager = createManager();
+  const manager = createManager(void 0, workspaceResolver(ctx));
   ctx.inject(["tools"], (scope) => {
     const tools = scope.tools;
     if (tools) registerSandboxTools(tools, manager);

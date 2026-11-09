@@ -106,17 +106,45 @@ export async function writeCredentialEnv(paths: SandboxPaths): Promise<void> {
 }
 
 /**
- * 官方包的模块解析。沙箱 profile 自己不带 node_modules，
- * 这里借用工作环境的官方包投影（只含指向 dsh 安装的软链，不含用户数据）。
+ * 官方包的模块解析。沙箱 profile 自己不带 node_modules，这里**逐个包**建 junction，
+ * 借用工作环境的官方包投影（只含指向 dsh 安装的软链，不含用户数据）。
+ *
+ * 不能把整个 node_modules 目录 junction 过去：那样往沙箱里写包会穿透到真实 profile
+ * 的依赖树（实测踩过）。scope 目录建成真实目录、内部逐包链接，沙箱里新增的包落在沙箱内。
  */
 export async function ensureModuleResolution(paths: SandboxPaths): Promise<void> {
-  const link = path.join(paths.home, "profiles", PROFILE_NODE_MODULES);
+  const target = path.join(paths.home, "profiles", PROFILE_NODE_MODULES);
   const shared = path.join(workHome(), "profiles", PROFILE_NODE_MODULES);
-  const linked = await fsp.access(link).then(() => true).catch(() => false);
-  if (linked) return;
   const available = await fsp.access(shared).then(() => true).catch(() => false);
   if (!available) return;
-  await fsp.symlink(shared, link, "junction").catch(() => undefined);
+
+  // 旧版本建的是「整个 node_modules 目录」的 junction，写入会穿透到真实 profile。
+  // 遇到这种遗留就拆掉重建，否则老实例照样污染工作环境。
+  const existing = await fsp.lstat(target).catch(() => undefined);
+  if (existing?.isSymbolicLink()) await fsp.unlink(target).catch(() => undefined);
+
+  await fsp.mkdir(target, { recursive: true });
+
+  const link = async (from: string, to: string): Promise<void> => {
+    const exists = await fsp.access(to).then(() => true).catch(() => false);
+    if (exists) return;
+    await fsp.symlink(from, to, "junction").catch(() => undefined);
+  };
+
+  const entries = await fsp.readdir(shared, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const from = path.join(shared, entry.name);
+    const to = path.join(target, entry.name);
+    if (!entry.name.startsWith("@")) {
+      await link(from, to);
+      continue;
+    }
+    await fsp.mkdir(to, { recursive: true });
+    const inner = await fsp.readdir(from, { withFileTypes: true }).catch(() => []);
+    for (const pkg of inner) {
+      await link(path.join(from, pkg.name), path.join(to, pkg.name));
+    }
+  }
 }
 
 export const currentProfileName = SANDBOX_PROFILE;

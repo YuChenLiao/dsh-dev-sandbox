@@ -12,24 +12,30 @@ import type { ManagerContext } from "./types.ts";
  * 只搜工作区，不接受任意路径。
  * 包名先过正则：它要拼进文件系统路径并且会被递归删除，不能带 `..` 或分隔符。
  */
-async function resolveSource(pkg: string): Promise<string> {
-  const cwd = process.cwd();
+async function resolveSource(pkg: string, workspaceDir: string | undefined): Promise<string> {
   const short = pkg.split("/").pop() ?? pkg;
-  const candidates = [
-    path.join(cwd, "node_modules", ...pkg.split("/")),
-    path.join(cwd, short),
-    path.join(cwd, "packages", short),
-  ];
-  for (const dir of candidates) {
-    const text = await fsp.readFile(path.join(dir, "package.json"), "utf8").catch(() => undefined);
-    if (!text) continue;
-    try {
-      if ((JSON.parse(text) as { name?: string }).name === pkg) return dir;
-    } catch {
-      // 不是合法 package.json，跳过
+  // 工作目录优先：process.cwd() 是宿主进程的 cwd，和用户项目目录没有关系。
+  const roots = [workspaceDir, process.cwd()].filter((item): item is string => Boolean(item));
+  for (const root of roots) {
+    const candidates = [
+      path.join(root, "node_modules", ...pkg.split("/")),
+      path.join(root, short),
+      path.join(root, "packages", short),
+    ];
+    for (const dir of candidates) {
+      const text = await fsp.readFile(path.join(dir, "package.json"), "utf8").catch(() => undefined);
+      if (!text) continue;
+      try {
+        if ((JSON.parse(text) as { name?: string }).name === pkg) return dir;
+      } catch {
+        // 不是合法 package.json，跳过
+      }
     }
   }
-  throw new SandboxError(`找不到 ${pkg} 的源码目录（试过工作区的 node_modules、包名目录、packages/）`, "package-not-found");
+  throw new SandboxError(
+    `找不到 ${pkg} 的源码目录（在工作目录与宿主 cwd 下的 node_modules、包名目录、packages/ 里都没有）`,
+    "package-not-found",
+  );
 }
 
 /**
@@ -41,7 +47,7 @@ export async function installPackage(ctx: ManagerContext, input: InstallInput): 
   if (!PACKAGE_NAME.test(name)) throw new SandboxError(`包名不合法：${name}`, "invalid-package-name");
 
   const record = await requireRecord(ctx, input.id);
-  const source = await resolveSource(name);
+  const source = await resolveSource(name, ctx.workspaceDir ? await ctx.workspaceDir() : undefined);
   const profileDir = path.join(record.home, "profiles", record.profile);
   const link = insidePath(profileDir, path.join(profileDir, PROFILE_NODE_MODULES, ...name.split("/")));
 

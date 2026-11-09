@@ -59,6 +59,9 @@ export async function dispatch(
   if (route === "start" && method === "POST") {
     return manager.start({ id: asId(await body()) });
   }
+  if (route === "restart" && method === "POST") {
+    return manager.restart({ id: asId(await body()) });
+  }
   if (route === "destroy" && method === "POST") {
     return manager.destroy({ id: asId(await body()) });
   }

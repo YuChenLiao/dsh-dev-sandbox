@@ -14,6 +14,9 @@ import type { ManagerContext } from "./types.ts";
  * 在沙箱里真跑一轮：headless profile 跑完把答案打到 stdout，工具名从落盘事件里摘。
  * 不走 web API 的原因见 runProfile.ts 的注释：旧实例的 session/prompt 只入队不驱动。
  * 会话 cwd 固定为沙箱 workspace，不接受调用方传路径。
+ *
+ * 传 `session` 时用 headless 的 `--session-id` 续接同一会话（实测可续，模型记得上一轮）；
+ * 它的前提是 cwd 一致且该会话没有 agent preset，我们的 run profile 两条都满足。
  */
 export async function promptSandbox(ctx: ManagerContext, input: PromptInput): Promise<PromptResult> {
   const record = await requireRecord(ctx, input.id);
@@ -25,8 +28,13 @@ export async function promptSandbox(ctx: ManagerContext, input: PromptInput): Pr
   // 幂等补齐：老实例创建时还没有这一步，第一次跑对话时补上。
   await writeCredentialEnv(paths);
 
+  const session = input.session?.trim();
+  const args = ["--profile", RUN_PROFILE];
+  if (session) args.push("--session-id", session);
+  args.push(text);
+
   const result = await runCommand(
-    ["--profile", RUN_PROFILE, text],
+    args,
     { cwd: record.workspace, env: sandboxEnv(record.home, paths.agentsHome), stdio: ["ignore", "pipe", "pipe"] },
     input.timeoutMs ?? 180_000,
   );

@@ -134,6 +134,8 @@ export interface PromptInput {
   id: string;
   text: string;
   timeoutMs?: number;
+  /** 续接已有会话：留空则新开一轮。多轮测试把上一轮返回的 session 传回来。 */
+  session?: string;
 }
 
 export interface PromptResult {

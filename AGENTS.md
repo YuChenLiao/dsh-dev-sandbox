@@ -51,7 +51,7 @@ dsh-dev-sandbox/
         │   ├── assets.ts         # 读取构建产物 panel.css
         │   ├── routes.ts         # HTTP 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
-        │   ├── tools.ts          # 交给模型的八个工具
+        │   ├── tools.ts          # 交给模型的九个工具
         │   └── register.ts       # 注册工具与 /__sbx
         └── sandbox-panel/        # client 可注册组件
             ├── config.ts         # 槽位、组件排序、轮询间隔、全部中文文案 TEXTS

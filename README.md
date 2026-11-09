@@ -41,6 +41,7 @@ dsh plugin --profile <profile> remove dsh-dev-sandbox
 - 独立的 `DSH_HOME`、profile、workspace、端口和 token。
 - 子进程环境只保留系统变量，所有 `DSH_*` 丢弃后显式重设，不会继承 `DSH_SESSION_ID`、`DSH_WEB_URL`、`DSH_PROFILE` 这类会误导插件的变量。
 - 新实例里没有会话、没有设置、没有记忆、没有任何插件数据，profile 层只有一份空补丁。
+- 沙箱 profile 的 `node_modules` 里官方包是**逐个链接**过去的（不是整个目录链接），往沙箱里装包不会写进工作环境的依赖树。
 - 模型凭据继承工作环境：创建时复制 `.credentials.yaml`，但剥掉 GUI 会话记录，沙箱启动时自己生成新的 browser-session。沙箱因此能直接调模型，而两边的浏览器登录态互不相通。凭据是创建那一刻的快照，工作环境刷新 token 后重建沙箱即可。
 - 那份凭据是**同权限的明文副本**：它一直躺在沙箱 home 里直到实例被销毁，沙箱内任何进程都能读它。读不到源文件或格式变化时整份不继承，沙箱的 `boot.log` 里能 grep 到 `credentials: skipped`；写不进沙箱 home 时创建直接失败，不会留一个半配置的实例。
 - 浏览器侧互不串：cookie 名与签名 audience 绑定 hostname 和端口，工作页面的登录态不会被带过去。
@@ -77,8 +78,10 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `POST` | `/create` | `{ name?, bundles?, apiKey? }` |
 | `POST` | `/stop` | `{ id }`，停进程、留数据 |
 | `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
+| `POST` | `/restart` | `{ id }`，停再起；装完插件必须走这一步 |
 | `POST` | `/destroy` | `{ id }` |
 | `POST` | `/config` | `{ id, bundles?, restart? }`，先过 `--dump-config` 预检，失败自动回滚 |
+| `GET` | `/status?id=` | 单个实例的进程、端口、权限档位、会话数、客户端图、日志错误 |
 | `GET` | `/tail?id=&limit=` | 读沙箱对话 |
 | `GET` | `/log?id=&lines=` | 读启动日志 |
 
@@ -92,11 +95,12 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | --- | --- |
 | `sandbox_create` | 建实例，返回端口、token 与就绪状态 |
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
-| `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名 |
+| `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
 | `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |
 | `sandbox_start` | 用已有目录重启，返回新端口与 token |
+| `sandbox_restart` | 停再起。装完插件必须走这一步，profile 在进程启动时组合 |
 | `sandbox_destroy` | 销毁 |
 
 入参只有实例 id 与包名或文本，没有路径、没有命令、没有环境变量。会话工作区、沙箱 policy、凭据位置都由插件内部决定，模型无从指定。
@@ -151,9 +155,11 @@ pnpm typecheck  # tsc --noEmit，strict + noUncheckedIndexedAccess
 ## 已知限制
 
 - **目前仅 Windows。** 进程树用 `taskkill /T`，官方包解析用 junction，macOS 与 Linux 上未适配。
+- **沙箱里跑不了 Git Bash。** 沙箱进程受 Windows 限制，不能创建命名管道；MSYS/Git Bash 启动就要建 signal pipe，会以 `couldn't create signal pipe, Win32 error 5` 失败。要在沙箱里验证脚本类技能，用 `pwsh`，或者知道这一层测不出来。
+- **装了插件必须重启实例。** profile 组合与工具集都在进程启动时装配，热更新不生效。
 - `/__sbx` 不做额外鉴权，只应绑 loopback。如果用反向代理把 GUI 暴露出去，这组接口会跟着暴露。
 - 面板文案没有接 Client locale 服务，集中在 `src/components/sandbox-panel/config.ts` 的 `TEXTS` 里。
-- 只支持创建、观察、销毁；把验证过的插件提升进工作 profile 的流程还没有。
+- 不支持把验证过的插件提升进工作 profile 的流程；验证完还是要自己装过去。
 
 ## License
 

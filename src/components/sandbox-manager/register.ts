@@ -8,6 +8,26 @@ import { dispatch } from "./routes.ts";
 import { registerSandboxTools, type ToolsLike } from "./tools.ts";
 
 /**
+ * 当前会话的工作目录。install 靠它找插件源码：`process.cwd()` 是宿主进程的 cwd，
+ * 与用户项目目录无关（实测会永远 package-not-found）。
+ */
+function workspaceResolver(ctx: HostContext): () => Promise<string | undefined> {
+  return async () => {
+    try {
+      const agents = ctx.get("agents") as { currentInitiator?: () => unknown } | undefined;
+      const workingDirectory = ctx.get("workingDirectory") as
+        | { ensure?: (agent: unknown) => Promise<string>; defaultDirectory?: string }
+        | undefined;
+      const agent = agents?.currentInitiator?.();
+      if (workingDirectory?.ensure && agent) return await workingDirectory.ensure(agent);
+      return workingDirectory?.defaultDirectory;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/**
  * 注册工具与 /__sbx 路由。
  *
  * 两个依赖都走 `ctx.inject`：`ctx.get` 在服务未就绪时返回 undefined，而插件 apply 的时机
@@ -15,7 +35,7 @@ import { registerSandboxTools, type ToolsLike } from "./tools.ts";
  * `/__sbx/list` 404、样式表 404、整页裸 HTML。
  */
 export function registerSandboxManager(ctx: HostContext): void {
-  const manager = createManager();
+  const manager = createManager(undefined, workspaceResolver(ctx));
 
   ctx.inject(["tools"], (scope) => {
     const tools = scope.tools as ToolsLike | undefined;

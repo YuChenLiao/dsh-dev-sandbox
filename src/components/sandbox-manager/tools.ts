@@ -37,8 +37,9 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     name: "sandbox_install",
     description:
       "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. "
-      + "The work profile and its node_modules are not touched. A running instance does not hot-load it: "
-      + "recreate the instance to load the plugin.",
+      + "The package is looked up in the current session's working directory (then the host cwd): "
+      + "`node_modules/<name>`, `<name>/`, or `packages/<name>/`. "
+      + "A running instance does not hot-load it: call sandbox_restart afterwards.",
     parameters: {
       type: "object",
       properties: {
@@ -59,12 +60,15 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
       "Run one real conversation turn inside a sandbox and return the assistant text plus the tool names it called. "
       + "This is how a dialogue-facing plugin gets verified. The turn runs on the sandbox's inherited model credentials, "
       + "so each call costs one real request. "
-      + "For the full event stream of that turn — every tool call with its arguments and result — call sandbox_tail next.",
+      + "Omit `session` to start a new conversation; pass the `session` value returned by the previous call to continue "
+      + "that same conversation — the sandbox model keeps its earlier context, which is how multi-turn behavior gets tested. "
+      + "For the full event stream of the turn — every tool call with its arguments and result — call sandbox_tail next.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string", description: "Sandbox instance id." },
         text: { type: "string", description: "Message to send." },
+        session: { type: "string", description: "Existing session id to continue. Omit for a new conversation." },
         timeoutMs: { type: "number", description: "How long to wait for the turn to settle." },
       },
       required: ["id", "text"],
@@ -73,7 +77,7 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     output: TEXT_OUTPUT,
     timeoutMs: 300_000,
     isConcurrencySafe: () => false,
-    execute: async (args: unknown) => manager.prompt(args as { id: string; text: string; timeoutMs?: number }),
+    execute: async (args: unknown) => manager.prompt(args as { id: string; text: string; timeoutMs?: number; session?: string }),
   });
 
   tools.register({
@@ -147,6 +151,24 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     timeoutMs: 180_000,
     isConcurrencySafe: () => false,
     execute: async (args: unknown) => manager.start(args as { id: string }),
+  });
+
+  tools.register({
+    name: "sandbox_restart",
+    description:
+      "Restart a sandbox: stop its process, then start it again from the same home. "
+      + "Required after sandbox_install — a profile is composed at process start, so a newly linked plugin "
+      + "does not appear until the instance restarts. The port may change.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "Sandbox instance id." } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 180_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.restart(args as { id: string }),
   });
 
   tools.register({
