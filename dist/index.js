@@ -516,6 +516,15 @@ function mcpLines(mcp) {
   }
   return lines;
 }
+function presetLines(yaml) {
+  const body = (yaml ?? "").trim();
+  if (!body) return [];
+  const firstLine = body.split("\n").find((line) => line.trim());
+  if (!firstLine || !firstLine.trimStart().startsWith("-")) {
+    throw new Error("preset \u5185\u5BB9\u4E0D\u662F\u9876\u5C42 entry-list\uFF0C\u65E0\u6CD5\u7269\u5316");
+  }
+  return ["- insert:", ...body.split("\n").map((line) => line.trim() ? `    ${line}` : line)];
+}
 function profilePatchBody(workspaceRoot, mcp) {
   return [
     PROFILE_PATCH_HEADER,
@@ -548,7 +557,7 @@ var PLATFORM_ACCOUNT_PREFIX = "deepseek-account-platform/";
 var RUN_PROFILE = "run";
 var HEADLESS_BUNDLE = "@deepseek-ai/dsh-headless";
 var WEB_APP_BUNDLE = "@deepseek-ai/dsh-web-app";
-function runProfilePatchBody(workspaceRoot, mcp) {
+function runProfilePatchBody(workspaceRoot, mcp, presetYaml) {
   return [
     "# \u6C99\u7BB1 headless \u8FD0\u884C\u5C42",
     "- id: credentials",
@@ -575,6 +584,10 @@ function runProfilePatchBody(workspaceRoot, mcp) {
     "        sandbox: danger-full-access",
     "        approval: never",
     ...mcpLines(mcp),
+    // headless 的组合器不认 agent preset（`assertAdoptable` 会直接拒绝带 preset 的会话），
+    // 所以 preset 里注册的插件进不了 agent 的 scope 链。物化到 profile 层之后它们以
+    // 全局身份加载，`collectFresh` 的 global 段就能看到它们。
+    ...presetLines(presetYaml),
     ""
   ].join("\n");
 }
@@ -935,14 +948,31 @@ async function addSkill(ctx, input) {
   await fsp6.symlink(source, target, "junction");
   return { name, source, requiresRestart: false };
 }
-async function writePatches(ctx, id, workspace, mcp) {
+async function writePatches(ctx, id, workspace, mcp, presetYaml) {
   const paths = instancePaths(ctx.root, id);
   const webProfile = path5.join(paths.home, PROFILE_DIR, SANDBOX_PROFILE);
   await fsp6.mkdir(webProfile, { recursive: true });
   await fsp6.writeFile(path5.join(webProfile, "cordis.patch.yml"), profilePatchBody(workspace, mcp));
   const runProfile = path5.join(paths.home, PROFILE_DIR, RUN_PROFILE);
   await fsp6.mkdir(runProfile, { recursive: true });
-  await fsp6.writeFile(path5.join(runProfile, "cordis.patch.yml"), runProfilePatchBody(workspace, mcp));
+  await fsp6.writeFile(path5.join(runProfile, "cordis.patch.yml"), runProfilePatchBody(workspace, mcp, presetYaml));
+}
+async function usePreset(ctx, input) {
+  const presetId = (input.preset ?? "").trim();
+  if (!presetId) throw new SandboxError("preset \u4E0D\u80FD\u4E3A\u7A7A", "missing-preset");
+  if (!ctx.resolvePreset) {
+    throw new SandboxError("\u8BFB\u4E0D\u5230\u5DE5\u4F5C\u73AF\u5883\u7684 agentPresets \u670D\u52A1", "preset-unavailable");
+  }
+  const record = await requireRecord(ctx, input.id);
+  const yaml = await ctx.resolvePreset(presetId);
+  if (!yaml) throw new SandboxError(`\u5DE5\u4F5C\u73AF\u5883\u91CC\u6CA1\u6709\u53EF\u8BFB\u7684 preset\u300C${presetId}\u300D`, "preset-not-found");
+  await writePatches(ctx, record.id, record.workspace, record.mcp ?? [], yaml);
+  await ctx.state.update((state) => {
+    const target = state.sandboxes.find((item) => item.id === record.id);
+    if (target) target.preset = { source: presetId, yaml };
+  });
+  const rows = yaml.split("\n").filter((line) => /^\s*-\s+\S/.test(line)).length;
+  return { preset: presetId, rows, requiresRestart: true };
 }
 async function addMcp(ctx, input) {
   const serverName = (input.serverName ?? "").trim();
@@ -962,7 +992,7 @@ async function addMcp(ctx, input) {
     const target = state.sandboxes.find((item) => item.id === record.id);
     if (target) target.mcp = next;
   });
-  await writePatches(ctx, record.id, record.workspace, next);
+  await writePatches(ctx, record.id, record.workspace, next, record.preset?.yaml);
   return { servers: next.map((entry) => entry.serverName), requiresRestart: true };
 }
 
@@ -1022,7 +1052,7 @@ import path8 from "node:path";
 // src/components/sandbox-manager/runProfile.ts
 import fsp8 from "node:fs/promises";
 import path7 from "node:path";
-async function ensureRunProfile(paths, bundles, mcp) {
+async function ensureRunProfile(paths, bundles, mcp, presetYaml) {
   const dir = path7.join(paths.home, "profiles", RUN_PROFILE);
   await fsp8.mkdir(dir, { recursive: true });
   const plugins = bundles.filter((item) => item !== WEB_APP_BUNDLE);
@@ -1032,7 +1062,7 @@ async function ensureRunProfile(paths, bundles, mcp) {
     `${JSON.stringify({ name: `dsh-profile-${RUN_PROFILE}`, private: true, dsh: { profile: { bundles: list } } }, null, 2)}
 `
   );
-  await fsp8.writeFile(path7.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace, mcp));
+  await fsp8.writeFile(path7.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace, mcp, presetYaml));
   const link = path7.join(dir, "node_modules");
   const shared = path7.join(paths.home, "profiles", SANDBOX_PROFILE, "node_modules");
   const linked = await fsp8.access(link).then(() => true).catch(() => false);
@@ -1046,7 +1076,7 @@ async function promptSandbox(ctx, input) {
   const text = input.text.trim();
   if (!text) throw new SandboxError("\u6D88\u606F\u5185\u5BB9\u4E3A\u7A7A", "empty-prompt");
   const paths = instancePaths(ctx.root, record.id);
-  await ensureRunProfile(paths, record.bundles, record.mcp);
+  await ensureRunProfile(paths, record.bundles, record.mcp, record.preset?.yaml);
   await writeCredentialEnv(paths);
   const session = input.session?.trim();
   const args = ["--profile", RUN_PROFILE];
@@ -1163,8 +1193,13 @@ async function reconfigureSandbox(ctx, input) {
 
 // src/components/sandbox-manager/manager.ts
 import path11 from "node:path";
-function createManager(root = resolveRoot(), workspaceDir) {
-  const ctx = { root, state: new StateStore(path11.join(root, STATE_FILE)), workspaceDir };
+function createManager(root = resolveRoot(), workspaceDir, resolvePreset) {
+  const ctx = {
+    root,
+    state: new StateStore(path11.join(root, STATE_FILE)),
+    workspaceDir,
+    resolvePreset
+  };
   return {
     root,
     create: (input) => createSandbox(ctx, input),
@@ -1172,6 +1207,7 @@ function createManager(root = resolveRoot(), workspaceDir) {
     install: (input) => installPackage(ctx, input),
     addSkill: (input) => addSkill(ctx, input),
     addMcp: (input) => addMcp(ctx, input),
+    usePreset: (input) => usePreset(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),
@@ -1233,6 +1269,10 @@ async function dispatch(manager, method, route, query, body) {
       serverName: String(payload.serverName ?? ""),
       config: typeof payload.config === "object" && payload.config ? payload.config : {}
     });
+  }
+  if (route === "preset" && method === "POST") {
+    const payload = await body();
+    return manager.usePreset({ id: asId(payload), preset: String(payload.preset ?? "") });
   }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
@@ -1377,6 +1417,22 @@ function registerSandboxTools(tools, manager) {
     execute: async (args) => manager.addMcp(args)
   });
   tools.register({
+    name: "sandbox_use_preset",
+    description: "Copy an agent preset's plugins from the current environment into a sandbox, so the sandbox agent can see contributions that would otherwise only exist inside that preset. Needed because the headless runner does not compose agent presets at all: skills, tools and other providers registered inside a preset never reach the sandbox agent's scope chain, and sandbox_prompt sees only the global layer. After materializing, those plugins load at profile level (global) instead of preset level. That is enough to verify whether a contribution reaches the agent; it does not reproduce preset scope semantics. The rows go into the headless run profile only \u2014 the sandbox's own web page does not load them. Call sandbox_restart afterwards, then use sandbox_prompt.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        preset: { type: "string", description: "Preset id in the current environment, e.g. the one this session uses." }
+      },
+      required: ["id", "preset"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.usePreset(args)
+  });
+  tools.register({
     name: "sandbox_stop",
     description: "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, so it can be started again later. Use this instead of sandbox_destroy when the data should survive.",
     parameters: {
@@ -1446,8 +1502,21 @@ function workspaceResolver(ctx) {
     }
   };
 }
+function presetResolver(ctx) {
+  return async (id) => {
+    try {
+      const presets = ctx.get("agentPresets");
+      if (!presets?.readDocument) return void 0;
+      const doc = await presets.readDocument(id);
+      const content = doc?.content;
+      return typeof content === "string" && content.trim() ? content : void 0;
+    } catch {
+      return void 0;
+    }
+  };
+}
 function registerSandboxManager(ctx) {
-  const manager = createManager(void 0, workspaceResolver(ctx));
+  const manager = createManager(void 0, workspaceResolver(ctx), presetResolver(ctx));
   ctx.inject(["tools"], (scope) => {
     const tools = scope.tools;
     if (tools) registerSandboxTools(tools, manager);

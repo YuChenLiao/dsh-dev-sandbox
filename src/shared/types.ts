@@ -16,6 +16,11 @@ export interface SandboxRecord {
   ready: boolean;
   /** 已配置的 MCP server；每次重写 profile 补丁时按这份清单生成。 */
   mcp?: McpEntry[];
+  /**
+   * 从工作环境物化进来的 preset 内容（entry-list YAML 原文）。
+   * 存原文而不是解析后的结构：`!!js` 表达式只能以文本形式进补丁。
+   */
+  preset?: { source: string; yaml: string };
 }
 
 /** 面板与工具看到的实例摘要，只含可展示字段。 */
@@ -85,6 +90,19 @@ export interface AddMcpInput {
 
 export interface AddMcpResult {
   servers: string[];
+  requiresRestart: boolean;
+}
+
+export interface UsePresetInput {
+  id: string;
+  /** 工作环境里的 preset id。 */
+  preset: string;
+}
+
+export interface UsePresetResult {
+  preset: string;
+  /** 物化进沙箱 run profile 的行数（按 YAML 非空行估）。 */
+  rows: number;
   requiresRestart: boolean;
 }
 

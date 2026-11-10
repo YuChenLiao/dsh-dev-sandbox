@@ -19,6 +19,11 @@ export interface ManagerContext {
    * 与用户项目目录无关，实测会导致 install 永远 package-not-found。
    */
   workspaceDir?: () => Promise<string | undefined>;
+  /**
+   * 读工作环境某个 agent preset 的 entry-list YAML（`readDocument().content`）。
+   * headless 的组合器不认 preset，只能把这份 YAML 物化进沙箱 profile。
+   */
+  resolvePreset?: (id: string) => Promise<string | undefined>;
 }
 
 /**

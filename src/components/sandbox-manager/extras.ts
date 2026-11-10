@@ -9,6 +9,8 @@ import type {
   AddSkillInput,
   AddSkillResult,
   McpEntry,
+  UsePresetInput,
+  UsePresetResult,
 } from "../../shared/types.ts";
 import { PROFILE_DIR, RUN_PROFILE, profilePatchBody, runProfilePatchBody } from "./config.ts";
 import { requireRecord } from "./inspect.ts";
@@ -96,7 +98,13 @@ export async function addSkill(ctx: ManagerContext, input: AddSkillInput): Promi
 }
 
 /** 重写两套补丁：web profile 与 headless run profile 各一份，漏一份就会「装上但看不到」。 */
-async function writePatches(ctx: ManagerContext, id: string, workspace: string, mcp: readonly McpEntry[]): Promise<void> {
+async function writePatches(
+  ctx: ManagerContext,
+  id: string,
+  workspace: string,
+  mcp: readonly McpEntry[],
+  presetYaml?: string,
+): Promise<void> {
   const paths = instancePaths(ctx.root, id);
   const webProfile = path.join(paths.home, PROFILE_DIR, SANDBOX_PROFILE);
   await fsp.mkdir(webProfile, { recursive: true });
@@ -104,7 +112,42 @@ async function writePatches(ctx: ManagerContext, id: string, workspace: string, 
 
   const runProfile = path.join(paths.home, PROFILE_DIR, RUN_PROFILE);
   await fsp.mkdir(runProfile, { recursive: true });
-  await fsp.writeFile(path.join(runProfile, "cordis.patch.yml"), runProfilePatchBody(workspace, mcp));
+  await fsp.writeFile(path.join(runProfile, "cordis.patch.yml"), runProfilePatchBody(workspace, mcp, presetYaml));
+}
+
+/**
+ * 把工作环境某个 agent preset 的插件行物化进沙箱的 run profile。
+ *
+ * 为什么需要这一步：`dsh-headless` 没有预设组合器，带 preset 的会话会被拒绝
+ * （见 `dsh-headless/lib/index.js` 的 `assertAdoptable`，0.2.2-rc.1 原文是
+ * `runs under agent preset …, which the one-shot runner does not compose`）。
+ * 结果就是 preset 里注册的技能/工具进不了 agent 的 scope 链，读取方只看得到 global 段。
+ * 物化到 profile 层之后，这些插件以全局身份加载，agent 就能看到。
+ *
+ * 代价：插件的 scope 身份从 preset 层变成 profile 层，`scopeOf(ctx)` 不再返回 preset key。
+ * 这条只验「贡献能不能进 agent」，不验「scope 语义对不对」。
+ * 也只写 run profile——沙箱自己的 web 实例不加载这些行。
+ */
+export async function usePreset(ctx: ManagerContext, input: UsePresetInput): Promise<UsePresetResult> {
+  const presetId = (input.preset ?? "").trim();
+  if (!presetId) throw new SandboxError("preset 不能为空", "missing-preset");
+  if (!ctx.resolvePreset) {
+    throw new SandboxError("读不到工作环境的 agentPresets 服务", "preset-unavailable");
+  }
+
+  const record = await requireRecord(ctx, input.id);
+  const yaml = await ctx.resolvePreset(presetId);
+  if (!yaml) throw new SandboxError(`工作环境里没有可读的 preset「${presetId}」`, "preset-not-found");
+
+  // 先写补丁再记账本：写盘失败时账本不会被改成「已物化」。
+  await writePatches(ctx, record.id, record.workspace, record.mcp ?? [], yaml);
+  await ctx.state.update((state) => {
+    const target = state.sandboxes.find((item) => item.id === record.id);
+    if (target) target.preset = { source: presetId, yaml };
+  });
+
+  const rows = yaml.split("\n").filter((line) => /^\s*-\s+\S/.test(line)).length;
+  return { preset: presetId, rows, requiresRestart: true };
 }
 
 /**
@@ -131,7 +174,7 @@ export async function addMcp(ctx: ManagerContext, input: AddMcpInput): Promise<A
     const target = state.sandboxes.find((item) => item.id === record.id);
     if (target) target.mcp = next;
   });
-  await writePatches(ctx, record.id, record.workspace, next);
+  await writePatches(ctx, record.id, record.workspace, next, record.preset?.yaml);
 
   return { servers: next.map((entry) => entry.serverName), requiresRestart: true };
 }

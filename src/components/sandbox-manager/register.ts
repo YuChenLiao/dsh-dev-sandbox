@@ -28,6 +28,29 @@ function workspaceResolver(ctx: HostContext): () => Promise<string | undefined> 
 }
 
 /**
+ * 读工作环境某个 preset 的 entry-list YAML。
+ *
+ * 不能用 `resolve(id)` 的返回值：它只给 `{ id, broken? }`，没有插件行
+ * （`config.plugins` 在 registry 内部的 definitions 上）。`readDocument` 是公开方法，
+ * 返回 `{ agentPreset, content }`，content 就是可以直接嵌进补丁的 YAML。
+ */
+function presetResolver(ctx: HostContext): (id: string) => Promise<string | undefined> {
+  return async (id) => {
+    try {
+      const presets = ctx.get("agentPresets") as
+        | { readDocument?: (agentPreset: string) => Promise<{ content?: unknown }> }
+        | undefined;
+      if (!presets?.readDocument) return undefined;
+      const doc = await presets.readDocument(id);
+      const content = doc?.content;
+      return typeof content === "string" && content.trim() ? content : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/**
  * 注册工具与 /__sbx 路由。
  *
  * 两个依赖都走 `ctx.inject`：`ctx.get` 在服务未就绪时返回 undefined，而插件 apply 的时机
@@ -35,7 +58,7 @@ function workspaceResolver(ctx: HostContext): () => Promise<string | undefined> 
  * `/__sbx/list` 404、样式表 404、整页裸 HTML。
  */
 export function registerSandboxManager(ctx: HostContext): void {
-  const manager = createManager(undefined, workspaceResolver(ctx));
+  const manager = createManager(undefined, workspaceResolver(ctx), presetResolver(ctx));
 
   ctx.inject(["tools"], (scope) => {
     const tools = scope.tools as ToolsLike | undefined;

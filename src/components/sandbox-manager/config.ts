@@ -35,8 +35,27 @@ function mcpLines(mcp: readonly McpEntry[] | undefined): string[] {
 }
 
 /**
+ * 物化后的 preset 行：`readDocument` 给的就是 entry-list YAML，原样缩进四格嵌进 `- insert:`。
+ * 比 JSON 化好的地方是 `!!js` 表达式能原样保留，不会被丢掉。
+ *
+ * 只接受**顶层** entry-list（首行以 `-` 开头）。content 来自用户可写的 preset 文件，
+ * 如果是顶层 mapping，缩进后拼出来的补丁会错位，所以这里先挡一下。
+ */
+function presetLines(yaml: string | undefined): string[] {
+  const body = (yaml ?? "").trim();
+  if (!body) return [];
+  const firstLine = body.split("\n").find((line) => line.trim());
+  if (!firstLine || !firstLine.trimStart().startsWith("-")) {
+    throw new Error("preset 内容不是顶层 entry-list，无法物化");
+  }
+  return ["- insert:", ...body.split("\n").map((line) => (line.trim() ? `    ${line}` : line))];
+}
+
+/**
  * 沙箱 profile 的补丁：把 agent 的文件与 shell 钉在 workspace 里。
  * 不依赖 base 的默认值，避免哪天默认放宽后沙箱跟着放宽。
+ *
+ * 不接收 preset 行——web profile 里没有 preset 可绑，物化只对 headless 的 run profile 有意义。
  */
 export function profilePatchBody(workspaceRoot: string, mcp?: readonly McpEntry[]): string {
   return [
@@ -79,7 +98,11 @@ export const WEB_APP_BUNDLE = "@deepseek-ai/dsh-web-app";
  * headless profile 的补丁：恢复凭据三行（headless 默认关掉它们），
  * 再把 agent 的文件与 shell 钉在 workspace。
  */
-export function runProfilePatchBody(workspaceRoot: string, mcp?: readonly McpEntry[]): string {
+export function runProfilePatchBody(
+  workspaceRoot: string,
+  mcp?: readonly McpEntry[],
+  presetYaml?: string,
+): string {
   return [
     "# 沙箱 headless 运行层",
     "- id: credentials",
@@ -106,6 +129,10 @@ export function runProfilePatchBody(workspaceRoot: string, mcp?: readonly McpEnt
     "        sandbox: danger-full-access",
     "        approval: never",
     ...mcpLines(mcp),
+    // headless 的组合器不认 agent preset（`assertAdoptable` 会直接拒绝带 preset 的会话），
+    // 所以 preset 里注册的插件进不了 agent 的 scope 链。物化到 profile 层之后它们以
+    // 全局身份加载，`collectFresh` 的 global 段就能看到它们。
+    ...presetLines(presetYaml),
     "",
   ].join("\n");
 }

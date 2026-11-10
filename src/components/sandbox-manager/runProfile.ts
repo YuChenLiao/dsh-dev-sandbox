@@ -19,6 +19,7 @@ export async function ensureRunProfile(
   paths: SandboxPaths,
   bundles: readonly string[],
   mcp?: readonly McpEntry[],
+  presetYaml?: string,
 ): Promise<void> {
   const dir = path.join(paths.home, "profiles", RUN_PROFILE);
   await fsp.mkdir(dir, { recursive: true });
@@ -30,7 +31,8 @@ export async function ensureRunProfile(
     `${JSON.stringify({ name: `dsh-profile-${RUN_PROFILE}`, private: true, dsh: { profile: { bundles: list } } }, null, 2)}\n`,
   );
   // MCP 行两套补丁都要有：只写 web profile 的话，headless 跑对话时看不到。
-  await fsp.writeFile(path.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace, mcp));
+  // 物化的 preset 行同理。
+  await fsp.writeFile(path.join(dir, "cordis.patch.yml"), runProfilePatchBody(paths.workspace, mcp, presetYaml));
 
   // 复用 web 侧的 node_modules：待测插件已经 junction 在那里，不必再装一遍。
   const link = path.join(dir, "node_modules");

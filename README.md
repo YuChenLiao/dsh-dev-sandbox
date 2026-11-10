@@ -80,6 +80,7 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `POST` | `/create` | `{ name?, bundles?, apiKey? }` |
 | `POST` | `/skill` | `{ id, name }`，把 skill 目录链进沙箱 |
 | `POST` | `/mcp` | `{ id, serverName, config }`，配一个 MCP server |
+| `POST` | `/preset` | `{ id, preset }`，把工作环境 preset 的插件行物化进沙箱 |
 | `POST` | `/stop` | `{ id }`，停进程、留数据 |
 | `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
 | `POST` | `/restart` | `{ id }`，停再起；装完插件必须走这一步 |
@@ -101,6 +102,7 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `sandbox_install` | 把工作区的插件 junction 进沙箱 profile |
 | `sandbox_add_skill` | 把工作区的 skill 目录链进沙箱自己的技能根 |
 | `sandbox_add_mcp` | 给沙箱配一个 MCP server（写进 profile 补丁的两套） |
+| `sandbox_use_preset` | 把工作环境某个 preset 的插件行物化进沙箱，让 headless 里的 agent 也能看到它们的贡献 |
 | `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
@@ -162,6 +164,7 @@ pnpm typecheck  # tsc --noEmit，strict + noUncheckedIndexedAccess
 
 - **目前仅 Windows。** 进程树用 `taskkill /T`，官方包解析用 junction，macOS 与 Linux 上未适配。
 - **沙箱里跑不了 Git Bash。** 沙箱进程受 Windows 限制，不能创建命名管道；MSYS/Git Bash 启动就要建 signal pipe，会以 `couldn't create signal pipe, Win32 error 5` 失败。要在沙箱里验证脚本类技能，用 `pwsh`，或者知道这一层测不出来。
+- **headless 不组合 agent preset。** `sandbox_prompt` 走的 `dsh-headless` 没有预设组合器：带 preset 的会话会被直接拒绝（0.2.2-rc.1 的报错是 `runs under agent preset …, which the one-shot runner does not compose`，别的版本措辞可能不同），所以注册在 preset 里的技能、工具在沙箱 agent 的 scope 链里根本不存在——你在真实会话里能看到 30 多个技能，在沙箱里只能看到全局层那几条，这不是插件的问题。要验证这类贡献，先 `sandbox_use_preset` 把 preset 的插件行物化进沙箱：它们会以**全局身份**加载，agent 就能看到，但 `scopeOf(ctx)` 不再返回 preset key，scope 语义不复现。物化只写进 headless 的 `run` profile，沙箱自己的 web 页面**不会**加载这些行。
 - **装了插件必须重启实例。** profile 组合与工具集都在进程启动时装配，热更新不生效。
 - `/__sbx` 不做额外鉴权，只应绑 loopback。如果用反向代理把 GUI 暴露出去，这组接口会跟着暴露。
 - 面板文案没有接 Client locale 服务，集中在 `src/components/sandbox-panel/config.ts` 的 `TEXTS` 里。

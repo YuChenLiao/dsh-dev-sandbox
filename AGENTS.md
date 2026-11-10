@@ -43,7 +43,7 @@ dsh-dev-sandbox/
         │   ├── boot.ts           # 起进程、解析地址、等就绪、失败自杀
         │   ├── lifecycle.ts      # create / stop / start / destroy
         │   ├── install.ts        # 把工作区插件 junction 进沙箱 profile
-        │   ├── extras.ts         # skill 链接与 MCP server 配置（两套补丁都写）
+        │   ├── extras.ts         # skill 链接、MCP server 配置、preset 物化（两套补丁都写）
         │   ├── runProfile.ts     # headless 运行 profile：base + headless + 待测插件
         │   ├── prompt.ts         # 在沙箱里真跑一轮对话
         │   ├── status.ts         # 进程 / 会话 / 客户端图 / 日志错误
@@ -52,7 +52,7 @@ dsh-dev-sandbox/
         │   ├── assets.ts         # 读取构建产物 panel.css
         │   ├── routes.ts         # HTTP 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
-        │   ├── tools.ts          # 交给模型的十一个工具
+        │   ├── tools.ts          # 交给模型的十二个工具
         │   └── register.ts       # 注册工具与 /__sbx
         └── sandbox-panel/        # client 可注册组件
             ├── config.ts         # 槽位、组件排序、轮询间隔、全部中文文案 TEXTS

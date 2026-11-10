@@ -24,7 +24,7 @@ export async function promptSandbox(ctx: ManagerContext, input: PromptInput): Pr
   if (!text) throw new SandboxError("消息内容为空", "empty-prompt");
 
   const paths = instancePaths(ctx.root, record.id);
-  await ensureRunProfile(paths, record.bundles, record.mcp);
+  await ensureRunProfile(paths, record.bundles, record.mcp, record.preset?.yaml);
   // 幂等补齐：老实例创建时还没有这一步，第一次跑对话时补上。
   await writeCredentialEnv(paths);
 

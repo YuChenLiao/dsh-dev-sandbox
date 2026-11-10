@@ -166,6 +166,31 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
   });
 
   tools.register({
+    name: "sandbox_use_preset",
+    description:
+      "Copy an agent preset's plugins from the current environment into a sandbox, so the sandbox agent can see "
+      + "contributions that would otherwise only exist inside that preset. "
+      + "Needed because the headless runner does not compose agent presets at all: skills, tools and other providers "
+      + "registered inside a preset never reach the sandbox agent's scope chain, and sandbox_prompt sees only the global layer. "
+      + "After materializing, those plugins load at profile level (global) instead of preset level. "
+      + "That is enough to verify whether a contribution reaches the agent; it does not reproduce preset scope semantics. "
+      + "The rows go into the headless run profile only — the sandbox's own web page does not load them. "
+      + "Call sandbox_restart afterwards, then use sandbox_prompt.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        preset: { type: "string", description: "Preset id in the current environment, e.g. the one this session uses." },
+      },
+      required: ["id", "preset"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.usePreset(args as { id: string; preset: string }),
+  });
+
+  tools.register({
     name: "sandbox_stop",
     description:
       "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, "

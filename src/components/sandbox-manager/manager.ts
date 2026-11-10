@@ -25,9 +25,11 @@ import type {
   StopResult,
   TailInput,
   TailResult,
+  UsePresetInput,
+  UsePresetResult,
 } from "../../shared/types.ts";
 import { readLog, listSandboxes, readTail } from "./inspect.ts";
-import { addMcp, addSkill } from "./extras.ts";
+import { addMcp, addSkill, usePreset } from "./extras.ts";
 import { installPackage } from "./install.ts";
 import { createSandbox, destroySandbox, restartSandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
 import { promptSandbox } from "./prompt.ts";
@@ -43,6 +45,7 @@ export interface SandboxManager {
   install(input: InstallInput): Promise<InstallResult>;
   addSkill(input: AddSkillInput): Promise<AddSkillResult>;
   addMcp(input: AddMcpInput): Promise<AddMcpResult>;
+  usePreset(input: UsePresetInput): Promise<UsePresetResult>;
   prompt(input: PromptInput): Promise<PromptResult>;
   status(id: string): Promise<StatusResult>;
   stop(input: LifecycleInput): Promise<StopResult>;
@@ -58,8 +61,14 @@ export interface SandboxManager {
 export function createManager(
   root = resolveRoot(),
   workspaceDir?: () => Promise<string | undefined>,
+  resolvePreset?: (id: string) => Promise<string | undefined>,
 ): SandboxManager {
-  const ctx: ManagerContext = { root, state: new StateStore(path.join(root, STATE_FILE)), workspaceDir };
+  const ctx: ManagerContext = {
+    root,
+    state: new StateStore(path.join(root, STATE_FILE)),
+    workspaceDir,
+    resolvePreset,
+  };
   return {
     root,
     create: (input) => createSandbox(ctx, input),
@@ -67,6 +76,7 @@ export function createManager(
     install: (input) => installPackage(ctx, input),
     addSkill: (input) => addSkill(ctx, input),
     addMcp: (input) => addMcp(ctx, input),
+    usePreset: (input) => usePreset(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),

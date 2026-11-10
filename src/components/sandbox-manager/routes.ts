@@ -65,6 +65,10 @@ export async function dispatch(
       config: (typeof payload.config === "object" && payload.config ? payload.config : {}) as Record<string, unknown>,
     });
   }
+  if (route === "preset" && method === "POST") {
+    const payload = await body();
+    return manager.usePreset({ id: asId(payload), preset: String(payload.preset ?? "") });
+  }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
   }
