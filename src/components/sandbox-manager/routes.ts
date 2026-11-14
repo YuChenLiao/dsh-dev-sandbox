@@ -30,10 +30,29 @@ export async function dispatch(
   if (route === "list" && method === "GET") {
     return { root: manager.root, sandboxes: await manager.list() };
   }
+  if (route === "read" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("缺少 id", "missing-id");
+    const maxBytes = Number(query.get("maxBytes"));
+    return manager.read({
+      id,
+      ...(query.get("path") ? { path: String(query.get("path")) } : {}),
+      ...(Number.isFinite(maxBytes) && maxBytes > 0 ? { maxBytes } : {}),
+    });
+  }
+  if (route === "boot-log" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("缺少 id", "missing-id");
+    return manager.bootLog({ id, lines: Number(query.get("lines") ?? 120) });
+  }
   if (route === "tail" && method === "GET") {
     const id = query.get("id");
     if (!id) throw new SandboxError("缺少 id", "missing-id");
-    return manager.tail({ id, limit: Number(query.get("limit") ?? 24) });
+    return manager.tail({
+      id,
+      limit: Number(query.get("limit") ?? 24),
+      ...(query.get("session") ? { session: String(query.get("session")) } : {}),
+    });
   }
   if (route === "status" && method === "GET") {
     const id = query.get("id");
@@ -52,6 +71,14 @@ export async function dispatch(
       bundles: asBundles(payload.bundles),
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : undefined,
     } satisfies CreateSandboxInput) };
+  }
+  if (route === "install" && method === "POST") {
+    const payload = await body();
+    return manager.install({
+      id: asId(payload),
+      package: String(payload.package ?? ""),
+      ...(payload.restart === false ? { restart: false } : {}),
+    });
   }
   if (route === "skill" && method === "POST") {
     const payload = await body();

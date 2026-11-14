@@ -6,6 +6,7 @@ import { insidePath } from "../../shared/paths.ts";
 import type { InstallInput, InstallResult } from "../../shared/types.ts";
 import { PROFILE_NODE_MODULES } from "./config.ts";
 import { requireRecord } from "./inspect.ts";
+import { restartSandbox } from "./lifecycle.ts";
 import type { ManagerContext } from "./types.ts";
 
 /**
@@ -69,5 +70,14 @@ export async function installPackage(ctx: ManagerContext, input: InstallInput): 
     if (target) target.bundles = bundles;
   });
 
-  return { package: name, source, bundles, requiresReload: true };
+  // 装完自动重启：profile 在进程启动时组合，不重启的话这次安装对正在跑的实例毫无作用。
+  // 想连着装几个再一起重启就传 restart: false。
+  if (input.restart === false) {
+    return { package: name, source, bundles, requiresReload: true };
+  }
+  if (!record.pid) {
+    return { package: name, source, bundles, requiresReload: false };
+  }
+  const restarted = await restartSandbox(ctx, { id: record.id });
+  return { package: name, source, bundles, requiresReload: false, port: restarted.port };
 }

@@ -464,12 +464,17 @@ async function listSandboxes(ctx) {
 }
 async function readTail(ctx, input) {
   const record = await requireRecord(ctx, input.id);
-  const file = newestSessionFile(record.home);
-  if (!file) return { sessions: 0, events: [] };
+  const files = listSessionFiles(record.home);
+  if (files.length === 0) return { sessions: 0, events: [] };
+  const wanted = input.session?.trim();
+  const file = wanted ? files.find((item) => item.split(/[\\/]/).slice(-2)[0] === wanted) : newestSessionFile(record.home);
+  if (!file) {
+    throw new SandboxError(`\u6CA1\u6709\u8FD9\u4E2A\u4F1A\u8BDD\uFF1A${wanted}`, "session-not-found");
+  }
   const limit = Math.max(1, Math.min(200, input.limit ?? 24));
   const page = await readSession(file, limit);
   return {
-    sessions: listSessionFiles(record.home).length,
+    sessions: files.length,
     session: file.split(/[\\/]/).slice(-2)[0],
     total: page.total,
     events: page.events
@@ -1010,6 +1015,51 @@ async function destroySandbox(ctx, input) {
 var SKILL_NAME = /^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 var SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/;
 var FIND_SKILL_DIR_BUDGET = 5e3;
+var READ_DEFAULT_BYTES = 64 * 1024;
+var READ_MAX_BYTES = 1024 * 1024;
+async function readWorkspace(ctx, input) {
+  const record = await requireRecord(ctx, input.id);
+  const root = record.workspace;
+  const relative = (input.path ?? "").trim().replace(/^[\\/]+/, "") || ".";
+  const target = insidePath(root, path5.join(root, relative));
+  const stat = await fsp6.lstat(target).catch(() => void 0);
+  if (!stat) throw new SandboxError(`\u6C99\u7BB1 workspace \u91CC\u6CA1\u6709\u8FD9\u4E2A\u8DEF\u5F84\uFF1A${relative}`, "path-not-found");
+  if (stat.isSymbolicLink()) {
+    throw new SandboxError(`\u4E0D\u8DDF\u968F\u7B26\u53F7\u94FE\u63A5\uFF1A${relative}`, "symlink-not-allowed");
+  }
+  if (stat.isDirectory()) {
+    const entries = await fsp6.readdir(target, { withFileTypes: true });
+    const list = [];
+    for (const entry of entries.slice(0, 500)) {
+      const full = path5.join(target, entry.name);
+      const info = await fsp6.lstat(full).catch(() => void 0);
+      list.push({
+        name: entry.name,
+        kind: entry.isDirectory() ? "dir" : "file",
+        size: info?.size ?? 0
+      });
+    }
+    return { path: relative, kind: "dir", entries: list, truncated: entries.length > 500 };
+  }
+  const limit = Math.max(1, Math.min(READ_MAX_BYTES, input.maxBytes ?? READ_DEFAULT_BYTES));
+  const handle = await fsp6.open(target, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min(limit, stat.size));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return {
+      path: relative,
+      kind: "file",
+      text: buffer.subarray(0, bytesRead).toString("utf8"),
+      bytes: stat.size,
+      truncated: stat.size > bytesRead
+    };
+  } finally {
+    await handle.close().catch(() => void 0);
+  }
+}
+async function readBootLog(ctx, input) {
+  return readLog(ctx, { ...input, lines: Math.max(1, Math.min(500, input.lines ?? 120)) });
+}
 async function findSkill(name, root, depth = 0, budget = { left: FIND_SKILL_DIR_BUDGET }) {
   if (depth > 4 || budget.left <= 0) return void 0;
   budget.left -= 1;
@@ -1154,7 +1204,14 @@ async function installPackage(ctx, input) {
     const target = state.sandboxes.find((item) => item.id === record.id);
     if (target) target.bundles = bundles;
   });
-  return { package: name, source, bundles, requiresReload: true };
+  if (input.restart === false) {
+    return { package: name, source, bundles, requiresReload: true };
+  }
+  if (!record.pid) {
+    return { package: name, source, bundles, requiresReload: false };
+  }
+  const restarted = await restartSandbox(ctx, { id: record.id });
+  return { package: name, source, bundles, requiresReload: false, port: restarted.port };
 }
 
 // src/components/sandbox-manager/prompt.ts
@@ -1216,6 +1273,23 @@ async function promptSandbox(ctx, input) {
 }
 
 // src/components/sandbox-manager/compare.ts
+function pairCalls(events) {
+  const calls = [];
+  let pending;
+  for (const event of events) {
+    if (event.type === "tool/call") {
+      const name = event.text.slice(0, event.text.indexOf("(") < 0 ? 32 : event.text.indexOf("("));
+      pending = { name, call: event.text };
+      continue;
+    }
+    if (event.type === "tool/result" && pending) {
+      calls.push({ ...pending, result: event.text });
+      pending = void 0;
+    }
+  }
+  if (pending) calls.push({ ...pending, result: "" });
+  return calls;
+}
 async function compareSandboxes(ctx, input) {
   const text = input.text.trim();
   const run = async (id, session) => {
@@ -1226,16 +1300,33 @@ async function compareSandboxes(ctx, input) {
         ...session ? { session } : {},
         ...input.timeoutMs === void 0 ? {} : { timeoutMs: input.timeoutMs }
       });
+      let calls = [];
+      try {
+        const page = await readTail(ctx, { id, session: result.session, limit: 120 });
+        calls = pairCalls(page.events);
+      } catch {
+        calls = [];
+      }
       return {
         id,
         ok: true,
         assistant: result.assistant,
         session: result.session,
         tools: result.tools,
+        calls,
         events: result.events
       };
     } catch (error) {
-      return { id, ok: false, assistant: "", session: "", tools: [], events: 0, error: asMessage(error) };
+      return {
+        id,
+        ok: false,
+        assistant: "",
+        session: "",
+        tools: [],
+        calls: [],
+        events: 0,
+        error: asMessage(error)
+      };
     }
   };
   const [a, b] = await Promise.all([run(input.a, input.sessionA), run(input.b, input.sessionB)]);
@@ -1353,6 +1444,8 @@ function createManager(root = resolveRoot(), workspaceDir, resolvePreset) {
     addSkill: (input) => addSkill(ctx, input),
     addMcp: (input) => addMcp(ctx, input),
     usePreset: (input) => usePreset(ctx, input),
+    read: (input) => readWorkspace(ctx, input),
+    bootLog: (input) => readBootLog(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),
@@ -1380,10 +1473,29 @@ async function dispatch(manager, method, route, query, body) {
   if (route === "list" && method === "GET") {
     return { root: manager.root, sandboxes: await manager.list() };
   }
+  if (route === "read" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("\u7F3A\u5C11 id", "missing-id");
+    const maxBytes = Number(query.get("maxBytes"));
+    return manager.read({
+      id,
+      ...query.get("path") ? { path: String(query.get("path")) } : {},
+      ...Number.isFinite(maxBytes) && maxBytes > 0 ? { maxBytes } : {}
+    });
+  }
+  if (route === "boot-log" && method === "GET") {
+    const id = query.get("id");
+    if (!id) throw new SandboxError("\u7F3A\u5C11 id", "missing-id");
+    return manager.bootLog({ id, lines: Number(query.get("lines") ?? 120) });
+  }
   if (route === "tail" && method === "GET") {
     const id = query.get("id");
     if (!id) throw new SandboxError("\u7F3A\u5C11 id", "missing-id");
-    return manager.tail({ id, limit: Number(query.get("limit") ?? 24) });
+    return manager.tail({
+      id,
+      limit: Number(query.get("limit") ?? 24),
+      ...query.get("session") ? { session: String(query.get("session")) } : {}
+    });
   }
   if (route === "status" && method === "GET") {
     const id = query.get("id");
@@ -1402,6 +1514,14 @@ async function dispatch(manager, method, route, query, body) {
       bundles: asBundles(payload.bundles),
       apiKey: typeof payload.apiKey === "string" ? payload.apiKey : void 0
     }) };
+  }
+  if (route === "install" && method === "POST") {
+    const payload = await body();
+    return manager.install({
+      id: asId(payload),
+      package: String(payload.package ?? ""),
+      ...payload.restart === false ? { restart: false } : {}
+    });
   }
   if (route === "skill" && method === "POST") {
     const payload = await body();
@@ -1489,17 +1609,19 @@ function registerSandboxTools(tools, manager) {
   });
   tools.register({
     name: "sandbox_install",
-    description: "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. The package is looked up in the current session's working directory (then the host cwd): `node_modules/<name>`, `<name>/`, or `packages/<name>/`. A running instance does not hot-load it: call sandbox_restart afterwards.",
+    description: "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. The package is looked up in the current session's working directory (then the host cwd): `node_modules/<name>`, `<name>/`, or `packages/<name>/`. The instance restarts automatically afterwards, because a profile is composed at process start; pass `restart: false` to install several packages and restart once at the end.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string", description: "Sandbox instance id." },
-        package: { type: "string", description: "Exact package name, e.g. dsh-dev-sandbox." }
+        package: { type: "string", description: "Exact package name, e.g. dsh-dev-sandbox." },
+        restart: { type: "boolean", description: "Restart the instance after linking. Defaults to true." }
       },
       required: ["id", "package"],
       additionalProperties: false
     },
     output: TEXT_OUTPUT,
+    timeoutMs: 24e4,
     isConcurrencySafe: () => false,
     execute: async (args) => manager.install(args)
   });
@@ -1637,6 +1759,39 @@ function registerSandboxTools(tools, manager) {
     timeoutMs: 6e5,
     isConcurrencySafe: () => false,
     execute: async (args) => manager.compare(args)
+  });
+  tools.register({
+    name: "sandbox_read",
+    description: "Read a file or list a directory inside a sandbox's workspace. This is how you check what a plugin actually produced \u2014 generated configs, caches, logs. Path is relative to the sandbox workspace and cannot escape it. Omit `path` to list the workspace root. Text is capped at 64 KiB by default (`maxBytes` up to 1 MiB); `truncated` tells you whether the file is longer.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        path: { type: "string", description: "Path relative to the sandbox workspace." },
+        maxBytes: { type: "number", description: "Byte budget when reading a file. Default 65536, max 1048576." }
+      },
+      required: ["id"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args) => manager.read(args)
+  });
+  tools.register({
+    name: "sandbox_log",
+    description: "Read the tail of a sandbox's boot.log. sandbox_status only returns the error lines; when a plugin fails to load you usually need the surrounding context \u2014 which bundle failed, what the resolver said. Read-only.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        lines: { type: "number", description: "How many trailing lines. Default 120, max 500." }
+      },
+      required: ["id"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args) => manager.bootLog(args)
   });
   tools.register({
     name: "sandbox_stop",

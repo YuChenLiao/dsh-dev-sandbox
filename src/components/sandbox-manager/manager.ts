@@ -20,6 +20,8 @@ import type {
   LogResult,
   PromptInput,
   PromptResult,
+  ReadInput,
+  ReadResult,
   ReconfigureInput,
   ReconfigureResult,
   SandboxRecord,
@@ -33,7 +35,7 @@ import type {
   UsePresetResult,
 } from "../../shared/types.ts";
 import { readLog, listSandboxes, readTail } from "./inspect.ts";
-import { addMcp, addSkill, usePreset } from "./extras.ts";
+import { addMcp, addSkill, readBootLog, readWorkspace, usePreset } from "./extras.ts";
 import { installPackage } from "./install.ts";
 import { createSandbox, cloneSandbox, destroySandbox, restartSandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
 import { compareSandboxes } from "./compare.ts";
@@ -53,6 +55,8 @@ export interface SandboxManager {
   addSkill(input: AddSkillInput): Promise<AddSkillResult>;
   addMcp(input: AddMcpInput): Promise<AddMcpResult>;
   usePreset(input: UsePresetInput): Promise<UsePresetResult>;
+  read(input: ReadInput): Promise<ReadResult>;
+  bootLog(input: LogInput): Promise<LogResult>;
   prompt(input: PromptInput): Promise<PromptResult>;
   status(id: string): Promise<StatusResult>;
   stop(input: LifecycleInput): Promise<StopResult>;
@@ -86,6 +90,8 @@ export function createManager(
     addSkill: (input) => addSkill(ctx, input),
     addMcp: (input) => addMcp(ctx, input),
     usePreset: (input) => usePreset(ctx, input),
+    read: (input) => readWorkspace(ctx, input),
+    bootLog: (input) => readBootLog(ctx, input),
     prompt: (input) => promptSandbox(ctx, input),
     status: (id) => readStatus(ctx, id),
     stop: (input) => stopSandbox(ctx, input),

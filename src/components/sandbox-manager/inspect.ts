@@ -4,6 +4,7 @@ import {
   newestSessionFile,
   readSession,
 } from "../../shared/sessionLog.ts";
+import { SandboxError } from "../../shared/errors.ts";
 import { portOpen } from "../../shared/process.ts";
 import type {
   LogInput,
@@ -58,12 +59,21 @@ export async function listSandboxes(ctx: ManagerContext): Promise<SandboxView[]>
 /** 读沙箱对话：直接读它的会话落盘文件，沙箱进程不需要参与。 */
 export async function readTail(ctx: ManagerContext, input: TailInput): Promise<TailResult> {
   const record = await requireRecord(ctx, input.id);
-  const file = newestSessionFile(record.home);
-  if (!file) return { sessions: 0, events: [] };
+  const files = listSessionFiles(record.home);
+  if (files.length === 0) return { sessions: 0, events: [] };
+
+  const wanted = input.session?.trim();
+  const file = wanted
+    ? files.find((item) => item.split(/[\\/]/).slice(-2)[0] === wanted)
+    : newestSessionFile(record.home);
+  if (!file) {
+    throw new SandboxError(`没有这个会话：${wanted}`, "session-not-found");
+  }
+
   const limit = Math.max(1, Math.min(200, input.limit ?? 24));
   const page = await readSession(file, limit);
   return {
-    sessions: listSessionFiles(record.home).length,
+    sessions: files.length,
     session: file.split(/[\\/]/).slice(-2)[0],
     total: page.total,
     events: page.events,

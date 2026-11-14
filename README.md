@@ -85,11 +85,14 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `POST` | `/compare` | `{ a, b, text, sessionA?, sessionB? }`，并行跑同一句话并对比 |
 | `POST` | `/stop` | `{ id }`，停进程、留数据 |
 | `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
-| `POST` | `/restart` | `{ id }`，停再起；装完插件必须走这一步 |
+| `POST` | `/install` | `{ id, package, restart? }`，链接工作区插件；默认装完自动重启 |
+| `POST` | `/restart` | `{ id }`，停再起 |
 | `POST` | `/destroy` | `{ id }` |
 | `POST` | `/config` | `{ id, bundles?, restart? }`，先过 `--dump-config` 预检，失败自动回滚 |
 | `GET` | `/status?id=` | 单个实例的进程、端口、权限档位、会话数、客户端图、日志错误 |
-| `GET` | `/tail?id=&limit=` | 读沙箱对话 |
+| `GET` | `/tail?id=&limit=&session=` | 读沙箱对话；`session` 指定读哪个会话，默认最新 |
+| `GET` | `/read?id=&path=&maxBytes=` | 读沙箱 workspace 里的文件或列目录 |
+| `GET` | `/boot-log?id=&lines=` | 读启动日志尾部 |
 | `GET` | `/log?id=&lines=` | 读启动日志 |
 
 `/config`、`/clone`、`/compare` 已实现但没有面板入口，目前走接口或模型侧工具。
@@ -107,12 +110,14 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `sandbox_use_preset` | 把工作环境某个 preset 的插件行物化进沙箱，让 headless 里的 agent 也能看到它们的贡献 |
 | `sandbox_clone` | 复刻一个实例当对照组：配置照搬，home 全新 |
 | `sandbox_compare` | 两个沙箱并行跑同一句话，并排返回两边的回答与工具调用 |
+| `sandbox_read` | 读沙箱 workspace 里的文件或列目录——判「插件写了什么」用 |
+| `sandbox_log` | 读启动日志尾部；`status` 只给错误行，排障要上下文 |
 | `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |
 | `sandbox_stop` | 停进程、释放端口，保留 home 与对话 |
 | `sandbox_start` | 用已有目录重启，返回新端口与 token |
-| `sandbox_restart` | 停再起。装完插件必须走这一步，profile 在进程启动时组合 |
+| `sandbox_restart` | 停再起。`sandbox_install` 现在默认自动重启，这个工具用于手工重来 |
 | `sandbox_destroy` | 销毁 |
 
 入参只有实例 id 与包名或文本，没有路径、没有命令、没有环境变量。会话工作区、沙箱 policy、凭据位置都由插件内部决定，模型无从指定。

@@ -148,6 +148,8 @@ export interface CompareSide {
   assistant: string;
   session: string;
   tools: string[];
+  /** 这一轮里的工具调用，按发生顺序配好参数与结果；两侧差异通常藏在这里。 */
+  calls: Array<{ name: string; call: string; result: string }>;
   events: number;
   error?: string;
 }
@@ -160,9 +162,35 @@ export interface CompareResult {
   identical: boolean;
 }
 
+export interface ReadInput {
+  id: string;
+  /** 相对沙箱 workspace 的路径；省略或 `/` 时列根目录。 */
+  path?: string;
+  /** 读文件时的字节上限，默认 64 KiB。 */
+  maxBytes?: number;
+}
+
+export interface ReadEntry {
+  name: string;
+  kind: "dir" | "file";
+  size: number;
+}
+
+export interface ReadResult {
+  /** 解析后的实际路径，相对 workspace。 */
+  path: string;
+  kind: "dir" | "file";
+  entries?: ReadEntry[];
+  text?: string;
+  bytes?: number;
+  truncated?: boolean;
+}
+
 export interface TailInput {
   id: string;
   limit?: number;
+  /** 指定要读的会话 id（目录名）；留空读最新那个。 */
+  session?: string;
 }
 
 export interface LogInput {
@@ -223,13 +251,18 @@ export interface ReconfigureResult {
 export interface InstallInput {
   id: string;
   package: string;
+  /** 装完自动重启实例，默认 true——不重启的话新插件不会进 profile 组合。 */
+  restart?: boolean;
 }
 
 export interface InstallResult {
   package: string;
   source: string;
   bundles: string[];
-  requiresReload: true;
+  /** 还需要手动重启才能生效（`restart: false` 时）。 */
+  requiresReload: boolean;
+  /** 自动重启后的新端口；没重启则为空。 */
+  port?: number;
 }
 
 /** 在沙箱里真实跑一轮对话，用来验证对话类插件。 */

@@ -39,19 +39,22 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
       "Install a workspace plugin into a sandbox by linking its source directory into that sandbox's own profile. "
       + "The package is looked up in the current session's working directory (then the host cwd): "
       + "`node_modules/<name>`, `<name>/`, or `packages/<name>/`. "
-      + "A running instance does not hot-load it: call sandbox_restart afterwards.",
+      + "The instance restarts automatically afterwards, because a profile is composed at process start; "
+      + "pass `restart: false` to install several packages and restart once at the end.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string", description: "Sandbox instance id." },
         package: { type: "string", description: "Exact package name, e.g. dsh-dev-sandbox." },
+        restart: { type: "boolean", description: "Restart the instance after linking. Defaults to true." },
       },
       required: ["id", "package"],
       additionalProperties: false,
     },
     output: TEXT_OUTPUT,
+    timeoutMs: 240_000,
     isConcurrencySafe: () => false,
-    execute: async (args: unknown) => manager.install(args as { id: string; package: string }),
+    execute: async (args: unknown) => manager.install(args as { id: string; package: string; restart?: boolean }),
   });
 
   tools.register({
@@ -238,6 +241,47 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
     execute: async (args: unknown) => manager.compare(args as {
       a: string; b: string; text: string; sessionA?: string; sessionB?: string; timeoutMs?: number;
     }),
+  });
+
+  tools.register({
+    name: "sandbox_read",
+    description:
+      "Read a file or list a directory inside a sandbox's workspace. This is how you check what a plugin actually "
+      + "produced — generated configs, caches, logs. Path is relative to the sandbox workspace and cannot escape it. "
+      + "Omit `path` to list the workspace root. Text is capped at 64 KiB by default (`maxBytes` up to 1 MiB); "
+      + "`truncated` tells you whether the file is longer.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        path: { type: "string", description: "Path relative to the sandbox workspace." },
+        maxBytes: { type: "number", description: "Byte budget when reading a file. Default 65536, max 1048576." },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args: unknown) => manager.read(args as { id: string; path?: string; maxBytes?: number }),
+  });
+
+  tools.register({
+    name: "sandbox_log",
+    description:
+      "Read the tail of a sandbox's boot.log. sandbox_status only returns the error lines; when a plugin fails to load "
+      + "you usually need the surrounding context — which bundle failed, what the resolver said. Read-only.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Sandbox instance id." },
+        lines: { type: "number", description: "How many trailing lines. Default 120, max 500." },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    execute: async (args: unknown) => manager.bootLog(args as { id: string; lines?: number }),
   });
 
   tools.register({

@@ -8,12 +8,17 @@ import type {
   AddMcpResult,
   AddSkillInput,
   AddSkillResult,
+  LogInput,
+  LogResult,
   McpEntry,
+  ReadEntry,
+  ReadInput,
+  ReadResult,
   UsePresetInput,
   UsePresetResult,
 } from "../../shared/types.ts";
+import { readLog, requireRecord } from "./inspect.ts";
 import { PROFILE_DIR, RUN_PROFILE, profilePatchBody, runProfilePatchBody } from "./config.ts";
-import { requireRecord } from "./inspect.ts";
 import { instancePaths } from "./lifecycle.ts";
 import type { ManagerContext } from "./types.ts";
 
@@ -23,6 +28,68 @@ const SKILL_NAME = /^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/;
 /** findSkill 的目录预算：超大 monorepo 里宁可报「找不到」也不扫几万个目录。 */
 const FIND_SKILL_DIR_BUDGET = 5000;
+const READ_DEFAULT_BYTES = 64 * 1024;
+const READ_MAX_BYTES = 1024 * 1024;
+
+/**
+ * 读沙箱 workspace 里的文件或列目录。
+ *
+ * 这是判「插件写了什么」的唯一通路：产物（配置、缓存、生成的日志）都在 workspace 里，
+ * 让沙箱里的模型自己 cat 再复述会失真。路径一律相对 workspace 且经 insidePath 收口，
+ * 出不了这个目录。
+ */
+export async function readWorkspace(ctx: ManagerContext, input: ReadInput): Promise<ReadResult> {
+  const record = await requireRecord(ctx, input.id);
+  const root = record.workspace;
+  const relative = (input.path ?? "").trim().replace(/^[\\/]+/, "") || ".";
+  const target = insidePath(root, path.join(root, relative));
+
+  const stat = await fsp.lstat(target).catch(() => undefined);
+  if (!stat) throw new SandboxError(`沙箱 workspace 里没有这个路径：${relative}`, "path-not-found");
+  // 不跟随链接：workspace 里如果有一个指向外部的 junction，open 会照着读出去。
+  if (stat.isSymbolicLink()) {
+    throw new SandboxError(`不跟随符号链接：${relative}`, "symlink-not-allowed");
+  }
+
+  if (stat.isDirectory()) {
+    const entries = await fsp.readdir(target, { withFileTypes: true });
+    const list: ReadEntry[] = [];
+    for (const entry of entries.slice(0, 500)) {
+      const full = path.join(target, entry.name);
+      const info = await fsp.lstat(full).catch(() => undefined);
+      list.push({
+        name: entry.name,
+        kind: entry.isDirectory() ? "dir" : "file",
+        size: info?.size ?? 0,
+      });
+    }
+    return { path: relative, kind: "dir", entries: list, truncated: entries.length > 500 };
+  }
+
+  const limit = Math.max(1, Math.min(READ_MAX_BYTES, input.maxBytes ?? READ_DEFAULT_BYTES));
+  const handle = await fsp.open(target, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min(limit, stat.size));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return {
+      path: relative,
+      kind: "file",
+      text: buffer.subarray(0, bytesRead).toString("utf8"),
+      bytes: stat.size,
+      truncated: stat.size > bytesRead,
+    };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+/**
+ * 读启动日志的尾部。`status` 只给错误行，排障时经常需要完整上下文。
+ * 默认 120 行：工具的入参说明写的就是这个数，不给默认值会退到 readLog 的 40。
+ */
+export async function readBootLog(ctx: ManagerContext, input: LogInput): Promise<LogResult> {
+  return readLog(ctx, { ...input, lines: Math.max(1, Math.min(500, input.lines ?? 120)) });
+}
 
 /**
  * 在工作目录里找 skill 目录：任意层的 `skills/<name>/SKILL.md` 或 `<name>/SKILL.md`。
