@@ -811,6 +811,117 @@ async function createSandbox(ctx, input) {
 ${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed", true);
   }
 }
+async function cloneLinks(from, to) {
+  let linked = 0;
+  const skipped = [];
+  const entries = await fsp5.readdir(from, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const src = path4.join(from, entry.name);
+    const dst = path4.join(to, entry.name);
+    const stat = await fsp5.lstat(src).catch(() => void 0);
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      const target = await fsp5.readlink(src).catch(() => void 0);
+      if (!target) {
+        skipped.push(entry.name);
+        continue;
+      }
+      await fsp5.mkdir(path4.dirname(dst), { recursive: true });
+      const exists = await fsp5.lstat(dst).then(() => true).catch(() => false);
+      if (exists) continue;
+      const built = await fsp5.symlink(target, dst, "junction").then(() => true).catch(() => false);
+      if (built) linked += 1;
+      else skipped.push(entry.name);
+      continue;
+    }
+    if (stat.isDirectory()) {
+      await fsp5.mkdir(dst, { recursive: true });
+      const nested = await cloneLinks(src, dst);
+      linked += nested.linked;
+      skipped.push(...nested.skipped);
+    }
+  }
+  return { linked, skipped };
+}
+async function cloneSandbox(ctx, input) {
+  const source = await requireRecord(ctx, input.from);
+  const id = newInstanceId();
+  const paths = instancePaths(ctx.root, id);
+  const env = sandboxEnv(paths.home, paths.agentsHome);
+  const fromProfile = path4.join(source.home, "profiles", source.profile);
+  const skillsRoot = path4.join(source.home, "skills");
+  const skillNames = [];
+  try {
+    await writeProfile(paths, source.bundles, source.mcp);
+    const sourceEnv = await fsp5.readFile(path4.join(source.home, ENV_FILE), "utf8").catch(() => void 0);
+    if (sourceEnv !== void 0) await fsp5.writeFile(path4.join(paths.home, ENV_FILE), sourceEnv);
+    await writeInheritedCredentials(paths);
+    await writeCredentialEnv(paths);
+    const cloned = await cloneLinks(path4.join(fromProfile, "node_modules"), path4.join(paths.profileDir, "node_modules"));
+    const linked = cloned.linked;
+    await ensureModuleResolution(paths);
+    const skills = await fsp5.readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
+    await fsp5.mkdir(path4.join(paths.home, "skills"), { recursive: true });
+    for (const entry of skills) {
+      const from = path4.join(skillsRoot, entry.name);
+      const to = path4.join(paths.home, "skills", entry.name);
+      const stat = await fsp5.lstat(from).catch(() => void 0);
+      if (!stat?.isSymbolicLink()) continue;
+      const target = await fsp5.readlink(from).catch(() => void 0);
+      if (!target) continue;
+      await fsp5.symlink(target, to, "junction").catch(() => void 0);
+      skillNames.push(entry.name);
+    }
+    const booted = await boot(paths, env);
+    const record = {
+      id,
+      name: input.name?.trim() || `${source.name}-control`,
+      home: paths.home,
+      workspace: paths.workspace,
+      logFile: paths.logFile,
+      profile: SANDBOX_PROFILE,
+      bundles: [...source.bundles],
+      port: booted.port,
+      token: booted.token,
+      pid: booted.child.pid ?? 0,
+      createdAt: Date.now(),
+      ready: booted.ready,
+      ...source.mcp ? { mcp: source.mcp } : {},
+      ...source.preset ? { preset: source.preset } : {}
+    };
+    await ctx.state.update((state) => {
+      state.sandboxes.push(record);
+    });
+    return {
+      id,
+      name: record.name,
+      port: booted.port,
+      token: booted.token,
+      pid: record.pid,
+      ready: booted.ready,
+      copied: {
+        bundles: record.bundles,
+        mcp: (source.mcp ?? []).map((item) => item.serverName),
+        preset: source.preset?.source ?? null,
+        skills: skillNames,
+        linked,
+        skipped: cloned.skipped
+      }
+    };
+  } catch (error) {
+    const log = await fsp5.readFile(paths.logFile, "utf8").catch(() => "");
+    await sleep(600);
+    await fsp5.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => void 0);
+    if (!log.trim()) throw error;
+    throw new SandboxError(
+      `${asMessage(error)}
+--- boot.log ---
+${log.trim().split("\n").slice(-40).join("\n")}`,
+      "clone-failed",
+      true
+    );
+  }
+}
 async function stopSandbox(ctx, input) {
   const record = await requireRecord(ctx, input.id);
   if (!record.pid) {
@@ -1104,6 +1215,38 @@ async function promptSandbox(ctx, input) {
   };
 }
 
+// src/components/sandbox-manager/compare.ts
+async function compareSandboxes(ctx, input) {
+  const text = input.text.trim();
+  const run = async (id, session) => {
+    try {
+      const result = await promptSandbox(ctx, {
+        id,
+        text,
+        ...session ? { session } : {},
+        ...input.timeoutMs === void 0 ? {} : { timeoutMs: input.timeoutMs }
+      });
+      return {
+        id,
+        ok: true,
+        assistant: result.assistant,
+        session: result.session,
+        tools: result.tools,
+        events: result.events
+      };
+    } catch (error) {
+      return { id, ok: false, assistant: "", session: "", tools: [], events: 0, error: asMessage(error) };
+    }
+  };
+  const [a, b] = await Promise.all([run(input.a, input.sessionA), run(input.b, input.sessionB)]);
+  return {
+    text,
+    a,
+    b,
+    identical: a.ok && b.ok && a.assistant === b.assistant
+  };
+}
+
 // src/components/sandbox-manager/status.ts
 import fsp9 from "node:fs/promises";
 import path9 from "node:path";
@@ -1203,6 +1346,8 @@ function createManager(root = resolveRoot(), workspaceDir, resolvePreset) {
   return {
     root,
     create: (input) => createSandbox(ctx, input),
+    clone: (input) => cloneSandbox(ctx, input),
+    compare: (input) => compareSandboxes(ctx, input),
     list: () => listSandboxes(ctx),
     install: (input) => installPackage(ctx, input),
     addSkill: (input) => addSkill(ctx, input),
@@ -1273,6 +1418,29 @@ async function dispatch(manager, method, route, query, body) {
   if (route === "preset" && method === "POST") {
     const payload = await body();
     return manager.usePreset({ id: asId(payload), preset: String(payload.preset ?? "") });
+  }
+  if (route === "clone" && method === "POST") {
+    const payload = await body();
+    return manager.clone({
+      from: typeof payload.from === "string" ? payload.from : asId(payload),
+      ...typeof payload.name === "string" ? { name: payload.name } : {}
+    });
+  }
+  if (route === "compare" && method === "POST") {
+    const payload = await body();
+    const a = typeof payload.a === "string" ? payload.a.trim() : "";
+    const b = typeof payload.b === "string" ? payload.b.trim() : "";
+    if (!a || !b) throw new SandboxError("compare \u9700\u8981 a \u4E0E b \u4E24\u4E2A\u5B9E\u4F8B id", "missing-id");
+    const text = String(payload.text ?? "").trim();
+    if (!text) throw new SandboxError("compare \u9700\u8981\u975E\u7A7A text\uFF0C\u7A7A\u6D88\u606F\u4F1A\u767D\u70E7\u4E24\u6B21\u6A21\u578B\u8C03\u7528", "empty-prompt");
+    return manager.compare({
+      a,
+      b,
+      text,
+      ...typeof payload.sessionA === "string" ? { sessionA: payload.sessionA } : {},
+      ...typeof payload.sessionB === "string" ? { sessionB: payload.sessionB } : {},
+      ...typeof payload.timeoutMs === "number" ? { timeoutMs: payload.timeoutMs } : {}
+    });
   }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
@@ -1431,6 +1599,44 @@ function registerSandboxTools(tools, manager) {
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => false,
     execute: async (args) => manager.usePreset(args)
+  });
+  tools.register({
+    name: "sandbox_clone",
+    description: "Clone a sandbox into a fresh instance with the same configuration \u2014 bundles, MCP servers, materialized preset rows, skill links and plugin links \u2014 but a new home, so it has no sessions or history. Use it to build a control group: clone first, then install the plugin under test into only one side, and sandbox_compare the two. The copy differs only in what you change afterwards.",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Sandbox instance id to clone." },
+        name: { type: "string", description: "Name for the clone; defaults to `<source>-control`." }
+      },
+      required: ["from"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 18e4,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.clone(args)
+  });
+  tools.register({
+    name: "sandbox_compare",
+    description: "Send the same message to two sandboxes in parallel and return both answers side by side, plus whether the assistant text is identical. The two runs are independent processes with their own home and port, so they really do run concurrently. Each side costs one real model request. Pass sessionA / sessionB to continue earlier conversations in each sandbox.",
+    parameters: {
+      type: "object",
+      properties: {
+        a: { type: "string", description: "First sandbox instance id." },
+        b: { type: "string", description: "Second sandbox instance id." },
+        text: { type: "string", description: "Message to send to both." },
+        sessionA: { type: "string", description: "Session id to continue on side a." },
+        sessionB: { type: "string", description: "Session id to continue on side b." },
+        timeoutMs: { type: "number", description: "Per-side timeout for the turn to settle." }
+      },
+      required: ["a", "b", "text"],
+      additionalProperties: false
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 6e5,
+    isConcurrencySafe: () => false,
+    execute: async (args) => manager.compare(args)
   });
   tools.register({
     name: "sandbox_stop",

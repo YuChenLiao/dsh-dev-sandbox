@@ -6,6 +6,10 @@ import type {
   AddMcpResult,
   AddSkillInput,
   AddSkillResult,
+  CloneInput,
+  CloneResult,
+  CompareInput,
+  CompareResult,
   CreateSandboxInput,
   DestroyInput,
   DestroyResult,
@@ -31,7 +35,8 @@ import type {
 import { readLog, listSandboxes, readTail } from "./inspect.ts";
 import { addMcp, addSkill, usePreset } from "./extras.ts";
 import { installPackage } from "./install.ts";
-import { createSandbox, destroySandbox, restartSandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
+import { createSandbox, cloneSandbox, destroySandbox, restartSandbox, startSandbox, stopSandbox } from "./lifecycle.ts";
+import { compareSandboxes } from "./compare.ts";
 import { promptSandbox } from "./prompt.ts";
 import { readStatus } from "./status.ts";
 import { reconfigureSandbox } from "./reconfigure.ts";
@@ -41,6 +46,8 @@ import path from "node:path";
 export interface SandboxManager {
   readonly root: string;
   create(input: CreateSandboxInput): Promise<SandboxRecord>;
+  clone(input: CloneInput): Promise<CloneResult>;
+  compare(input: CompareInput): Promise<CompareResult>;
   list(): Promise<SandboxView[]>;
   install(input: InstallInput): Promise<InstallResult>;
   addSkill(input: AddSkillInput): Promise<AddSkillResult>;
@@ -72,6 +79,8 @@ export function createManager(
   return {
     root,
     create: (input) => createSandbox(ctx, input),
+    clone: (input) => cloneSandbox(ctx, input),
+    compare: (input) => compareSandboxes(ctx, input),
     list: () => listSandboxes(ctx),
     install: (input) => installPackage(ctx, input),
     addSkill: (input) => addSkill(ctx, input),

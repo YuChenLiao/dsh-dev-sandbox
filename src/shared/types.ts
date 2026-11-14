@@ -106,6 +106,60 @@ export interface UsePresetResult {
   requiresRestart: boolean;
 }
 
+export interface CloneInput {
+  /** 被复刻的实例。 */
+  from: string;
+  name?: string;
+}
+
+export interface CloneResult {
+  id: string;
+  name: string;
+  port: number;
+  token: string;
+  pid: number;
+  ready: boolean;
+  /** 复刻了哪些东西，便于确认对照组和实验组只在预期的维度不同。 */
+  copied: {
+    bundles: string[];
+    mcp: string[];
+    preset: string | null;
+    skills: string[];
+    /** 成功重建的链接数。 */
+    linked: number;
+    /** 没能重建的链接，缺件要在这里看得见，而不是只体现为启动失败。 */
+    skipped: string[];
+  };
+}
+
+export interface CompareInput {
+  a: string;
+  b: string;
+  text: string;
+  /** 各自的续接会话；留空则两边都新开一轮。 */
+  sessionA?: string;
+  sessionB?: string;
+  timeoutMs?: number;
+}
+
+export interface CompareSide {
+  id: string;
+  ok: boolean;
+  assistant: string;
+  session: string;
+  tools: string[];
+  events: number;
+  error?: string;
+}
+
+export interface CompareResult {
+  text: string;
+  a: CompareSide;
+  b: CompareSide;
+  /** 两边助手回复是否逐字相同。 */
+  identical: boolean;
+}
+
 export interface TailInput {
   id: string;
   limit?: number;

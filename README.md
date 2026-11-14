@@ -81,6 +81,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `POST` | `/skill` | `{ id, name }`，把 skill 目录链进沙箱 |
 | `POST` | `/mcp` | `{ id, serverName, config }`，配一个 MCP server |
 | `POST` | `/preset` | `{ id, preset }`，把工作环境 preset 的插件行物化进沙箱 |
+| `POST` | `/clone` | `{ from, name? }`，复刻一个实例当对照组 |
+| `POST` | `/compare` | `{ a, b, text, sessionA?, sessionB? }`，并行跑同一句话并对比 |
 | `POST` | `/stop` | `{ id }`，停进程、留数据 |
 | `POST` | `/start` | `{ id }`，用已有目录重启，返回新端口与 token |
 | `POST` | `/restart` | `{ id }`，停再起；装完插件必须走这一步 |
@@ -90,7 +92,7 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `GET` | `/tail?id=&limit=` | 读沙箱对话 |
 | `GET` | `/log?id=&lines=` | 读启动日志 |
 
-`/config` 已实现但没有面板入口，改 bundles 目前走接口或直接编辑沙箱 profile。
+`/config`、`/clone`、`/compare` 已实现但没有面板入口，目前走接口或模型侧工具。
 
 ## 给模型的工具
 
@@ -103,6 +105,8 @@ host 半边注册一条 `/__sbx` prefix 路由，client 半边在 `dsh-better-si
 | `sandbox_add_skill` | 把工作区的 skill 目录链进沙箱自己的技能根 |
 | `sandbox_add_mcp` | 给沙箱配一个 MCP server（写进 profile 补丁的两套） |
 | `sandbox_use_preset` | 把工作环境某个 preset 的插件行物化进沙箱，让 headless 里的 agent 也能看到它们的贡献 |
+| `sandbox_clone` | 复刻一个实例当对照组：配置照搬，home 全新 |
+| `sandbox_compare` | 两个沙箱并行跑同一句话，并排返回两边的回答与工具调用 |
 | `sandbox_prompt` | 在沙箱里真跑一轮对话，返回回复与调用过的工具名；传回上一轮的 `session` 可续接，测多轮 |
 | `sandbox_status` | 进程、端口、会话数、客户端图、启动日志里的错误 |
 | `sandbox_tail` | 读沙箱自己的会话：最近 24 条事件，含工具调用的参数与结果 |

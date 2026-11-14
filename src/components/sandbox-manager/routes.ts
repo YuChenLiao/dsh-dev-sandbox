@@ -69,6 +69,29 @@ export async function dispatch(
     const payload = await body();
     return manager.usePreset({ id: asId(payload), preset: String(payload.preset ?? "") });
   }
+  if (route === "clone" && method === "POST") {
+    const payload = await body();
+    return manager.clone({
+      from: typeof payload.from === "string" ? payload.from : asId(payload),
+      ...(typeof payload.name === "string" ? { name: payload.name } : {}),
+    });
+  }
+  if (route === "compare" && method === "POST") {
+    const payload = await body();
+    const a = typeof payload.a === "string" ? payload.a.trim() : "";
+    const b = typeof payload.b === "string" ? payload.b.trim() : "";
+    if (!a || !b) throw new SandboxError("compare 需要 a 与 b 两个实例 id", "missing-id");
+    const text = String(payload.text ?? "").trim();
+    if (!text) throw new SandboxError("compare 需要非空 text，空消息会白烧两次模型调用", "empty-prompt");
+    return manager.compare({
+      a,
+      b,
+      text,
+      ...(typeof payload.sessionA === "string" ? { sessionA: payload.sessionA } : {}),
+      ...(typeof payload.sessionB === "string" ? { sessionB: payload.sessionB } : {}),
+      ...(typeof payload.timeoutMs === "number" ? { timeoutMs: payload.timeoutMs } : {}),
+    });
+  }
   if (route === "stop" && method === "POST") {
     return manager.stop({ id: asId(await body()) });
   }

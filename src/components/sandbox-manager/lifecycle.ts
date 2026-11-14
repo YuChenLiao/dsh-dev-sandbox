@@ -3,9 +3,10 @@ import path from "node:path";
 import { PORT_RELEASE_TIMEOUT_MS, SANDBOX_PROFILE, TRASH_PREFIX } from "../../shared/config.ts";
 import { asMessage, SandboxError } from "../../shared/errors.ts";
 import { insidePath } from "../../shared/paths.ts";
-import { killTree, portOpen, sandboxEnv, sleep } from "../../shared/process.ts";import type { CreateSandboxInput, DestroyInput, DestroyResult, LifecycleInput, SandboxRecord, StartResult, StopResult } from "../../shared/types.ts";
+import { killTree, portOpen, sandboxEnv, sleep } from "../../shared/process.ts";import type { CloneInput, CloneResult, CreateSandboxInput, DestroyInput, DestroyResult, LifecycleInput, SandboxRecord, StartResult, StopResult } from "../../shared/types.ts";
 import { boot } from "./boot.ts";
 import {
+  ENV_FILE,
   HOME_DIR,
   INSTANCE_ID_LENGTH,
   INSTANCE_ID_PREFIX,
@@ -79,6 +80,134 @@ export async function createSandbox(ctx: ManagerContext, input: CreateSandboxInp
     if (!log.trim()) throw error;
     // 内层多半已经是带 code 的 SandboxError，再套一层只会得到 `[create-failed] [boot-failed] …`。
     throw new SandboxError(`${asMessage(error)}\n--- boot.log ---\n${log.trim().split("\n").slice(-40).join("\n")}`, "create-failed", true);
+  }
+}
+
+/** 递归重建目录里的符号链接：复制的是「链」本身，不是目标内容。返回建成数与失败项。 */
+async function cloneLinks(from: string, to: string): Promise<{ linked: number; skipped: string[] }> {
+  let linked = 0;
+  const skipped: string[] = [];
+  const entries = await fsp.readdir(from, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    const stat = await fsp.lstat(src).catch(() => undefined);
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      const target = await fsp.readlink(src).catch(() => undefined);
+      if (!target) {
+        skipped.push(entry.name);
+        continue;
+      }
+      await fsp.mkdir(path.dirname(dst), { recursive: true });
+      const exists = await fsp.lstat(dst).then(() => true).catch(() => false);
+      if (exists) continue;
+      // 只在真的建出来时才计数：`linked` 是对照组「配置照搬了」的依据，虚报会掩盖缺件。
+      const built = await fsp.symlink(target, dst, "junction").then(() => true).catch(() => false);
+      if (built) linked += 1;
+      else skipped.push(entry.name);
+      continue;
+    }
+    if (stat.isDirectory()) {
+      await fsp.mkdir(dst, { recursive: true });
+      const nested = await cloneLinks(src, dst);
+      linked += nested.linked;
+      skipped.push(...nested.skipped);
+    }
+  }
+  return { linked, skipped };
+}
+
+/**
+ * 复刻一个实例当对照组：bundles、MCP、preset、skill 链接、插件 junction 全部照搬，
+ * 但 home 是全新的——没有会话、没有历史。
+ *
+ * 对照组的意义在于「只在待测的那一维不同」：先 clone，再只在其中一个里装插件，
+ * 两边跑同一句话，差异就归因到插件身上。
+ */
+export async function cloneSandbox(ctx: ManagerContext, input: CloneInput): Promise<CloneResult> {
+  const source = await requireRecord(ctx, input.from);
+  const id = newInstanceId();
+  const paths = instancePaths(ctx.root, id);
+  const env = sandboxEnv(paths.home, paths.agentsHome);
+
+  const fromProfile = path.join(source.home, "profiles", source.profile);
+  const skillsRoot = path.join(source.home, "skills");
+  const skillNames: string[] = [];
+
+  try {
+    await writeProfile(paths, source.bundles, source.mcp);
+    // 源的 .env 要一起搬：如果实验组是用显式 apiKey 建的，克隆改用继承凭据就会让两边
+    // 的模型鉴权不同，「只差待测维度」这个前提就破了。writeCredentialEnv 见到 .env 会跳过。
+    const sourceEnv = await fsp.readFile(path.join(source.home, ENV_FILE), "utf8").catch(() => undefined);
+    if (sourceEnv !== undefined) await fsp.writeFile(path.join(paths.home, ENV_FILE), sourceEnv);
+    await writeInheritedCredentials(paths);
+    await writeCredentialEnv(paths);
+    // 先搬插件链接，再补官方包：ensureModuleResolution 幂等，只补缺的。
+    const cloned = await cloneLinks(path.join(fromProfile, "node_modules"), path.join(paths.profileDir, "node_modules"));
+    const linked = cloned.linked;
+    await ensureModuleResolution(paths);
+
+    const skills = await fsp.readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
+    await fsp.mkdir(path.join(paths.home, "skills"), { recursive: true });
+    for (const entry of skills) {
+      const from = path.join(skillsRoot, entry.name);
+      const to = path.join(paths.home, "skills", entry.name);
+      const stat = await fsp.lstat(from).catch(() => undefined);
+      if (!stat?.isSymbolicLink()) continue;
+      const target = await fsp.readlink(from).catch(() => undefined);
+      if (!target) continue;
+      await fsp.symlink(target, to, "junction").catch(() => undefined);
+      skillNames.push(entry.name);
+    }
+
+    const booted = await boot(paths, env);
+    const record: SandboxRecord = {
+      id,
+      name: input.name?.trim() || `${source.name}-control`,
+      home: paths.home,
+      workspace: paths.workspace,
+      logFile: paths.logFile,
+      profile: SANDBOX_PROFILE,
+      bundles: [...source.bundles],
+      port: booted.port,
+      token: booted.token,
+      pid: booted.child.pid ?? 0,
+      createdAt: Date.now(),
+      ready: booted.ready,
+      ...(source.mcp ? { mcp: source.mcp } : {}),
+      ...(source.preset ? { preset: source.preset } : {}),
+    };
+    await ctx.state.update((state) => {
+      state.sandboxes.push(record);
+    });
+
+    return {
+      id,
+      name: record.name,
+      port: booted.port,
+      token: booted.token,
+      pid: record.pid,
+      ready: booted.ready,
+      copied: {
+        bundles: record.bundles,
+        mcp: (source.mcp ?? []).map((item) => item.serverName),
+        preset: source.preset?.source ?? null,
+        skills: skillNames,
+        linked,
+        skipped: cloned.skipped,
+      },
+    };
+  } catch (error) {
+    const log = await fsp.readFile(paths.logFile, "utf8").catch(() => "");
+    await sleep(600);
+    await fsp.rm(paths.dir, { recursive: true, force: true, maxRetries: 4 }).catch(() => undefined);
+    if (!log.trim()) throw error;
+    throw new SandboxError(
+      `${asMessage(error)}\n--- boot.log ---\n${log.trim().split("\n").slice(-40).join("\n")}`,
+      "clone-failed",
+      true,
+    );
   }
 }
 

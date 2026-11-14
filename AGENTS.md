@@ -41,7 +41,8 @@ dsh-dev-sandbox/
         │   ├── types.ts          # ManagerContext / HostContext / WebServerLike
         │   ├── profile.ts        # profile 清单、.env、凭据继承、官方包解析
         │   ├── boot.ts           # 起进程、解析地址、等就绪、失败自杀
-        │   ├── lifecycle.ts      # create / stop / start / destroy
+        │   ├── lifecycle.ts      # create / clone / stop / start / restart / destroy
+        │   ├── compare.ts        # 两个实例并行跑同一句话并对比
         │   ├── install.ts        # 把工作区插件 junction 进沙箱 profile
         │   ├── extras.ts         # skill 链接、MCP server 配置、preset 物化（两套补丁都写）
         │   ├── runProfile.ts     # headless 运行 profile：base + headless + 待测插件
@@ -52,7 +53,7 @@ dsh-dev-sandbox/
         │   ├── assets.ts         # 读取构建产物 panel.css
         │   ├── routes.ts         # HTTP 路由表与入参校验
         │   ├── manager.ts        # 组装成 SandboxManager
-        │   ├── tools.ts          # 交给模型的十二个工具
+        │   ├── tools.ts          # 交给模型的十四个工具
         │   └── register.ts       # 注册工具与 /__sbx
         └── sandbox-panel/        # client 可注册组件
             ├── config.ts         # 槽位、组件排序、轮询间隔、全部中文文案 TEXTS

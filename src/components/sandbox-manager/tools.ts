@@ -191,6 +191,56 @@ export function registerSandboxTools(tools: ToolsLike, manager: SandboxManager):
   });
 
   tools.register({
+    name: "sandbox_clone",
+    description:
+      "Clone a sandbox into a fresh instance with the same configuration — bundles, MCP servers, materialized preset rows, "
+      + "skill links and plugin links — but a new home, so it has no sessions or history. "
+      + "Use it to build a control group: clone first, then install the plugin under test into only one side, "
+      + "and sandbox_compare the two. The copy differs only in what you change afterwards.",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Sandbox instance id to clone." },
+        name: { type: "string", description: "Name for the clone; defaults to `<source>-control`." },
+      },
+      required: ["from"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 180_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.clone(args as { from: string; name?: string }),
+  });
+
+  tools.register({
+    name: "sandbox_compare",
+    description:
+      "Send the same message to two sandboxes in parallel and return both answers side by side, plus whether the "
+      + "assistant text is identical. The two runs are independent processes with their own home and port, so they "
+      + "really do run concurrently. Each side costs one real model request. "
+      + "Pass sessionA / sessionB to continue earlier conversations in each sandbox.",
+    parameters: {
+      type: "object",
+      properties: {
+        a: { type: "string", description: "First sandbox instance id." },
+        b: { type: "string", description: "Second sandbox instance id." },
+        text: { type: "string", description: "Message to send to both." },
+        sessionA: { type: "string", description: "Session id to continue on side a." },
+        sessionB: { type: "string", description: "Session id to continue on side b." },
+        timeoutMs: { type: "number", description: "Per-side timeout for the turn to settle." },
+      },
+      required: ["a", "b", "text"],
+      additionalProperties: false,
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
+    isConcurrencySafe: () => false,
+    execute: async (args: unknown) => manager.compare(args as {
+      a: string; b: string; text: string; sessionA?: string; sessionB?: string; timeoutMs?: number;
+    }),
+  });
+
+  tools.register({
     name: "sandbox_stop",
     description:
       "Stop a sandbox's process and release its port while keeping its home directory, profile and sessions, "
